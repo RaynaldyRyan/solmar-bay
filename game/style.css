@@ -1,49 +1,116 @@
+/* Solmar Bay: Neon Tide — HUD and menu styling. */
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e14; font-family: 'Segoe UI', system-ui, Arial, sans-serif; color: #fff; }
-#game { position: fixed; inset: 0; }
-#game canvas { display: block; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #12081f;
+  font-family: 'Segoe UI', Arial, Helvetica, sans-serif; color: #fff; }
+#game-container, #game-container canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hidden { display: none !important; }
 
-/* ---------- HUD ---------- */
-#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
-#topRight { position: absolute; top: 14px; right: 18px; text-align: right; text-shadow: 0 2px 4px rgba(0,0,0,.8); }
-#stars { font-size: 30px; letter-spacing: 4px; color: #888; }
-#stars.hot { color: #ffd23b; text-shadow: 0 0 12px rgba(255, 210, 59, .8); }
-#money { font-size: 26px; font-weight: 700; color: #7dff9a; }
-#clock { font-size: 18px; color: #fff; }
-#topLeft { position: absolute; top: 14px; left: 18px; max-width: 380px; text-shadow: 0 2px 4px rgba(0,0,0,.8); }
-#objective { font-size: 17px; font-weight: 600; background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 6px; border-left: 4px solid #f5c518; }
-#objectiveTimer { font-size: 15px; margin-top: 4px; color: #ffd23b; }
-#minimap { position: absolute; left: 18px; bottom: 18px; width: 150px; height: 150px; border-radius: 50%; border: 3px solid rgba(255,255,255,.75); box-shadow: 0 0 0 2px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.6); }
-#bottomRight { position: absolute; right: 18px; bottom: 18px; text-align: right; text-shadow: 0 2px 4px rgba(0,0,0,.8); }
-#weapon { font-size: 18px; font-weight: 700; }
-#speed { font-size: 22px; font-weight: 700; color: #ffd23b; }
-#bottomLeft { position: absolute; left: 186px; bottom: 24px; text-shadow: 0 2px 4px rgba(0,0,0,.8); }
-#healthRow { font-size: 16px; font-weight: 700; }
-#healthbarWrap { width: 160px; height: 10px; background: rgba(0,0,0,.55); border-radius: 5px; margin-top: 4px; overflow: hidden; }
-.bar-fill { height: 100%; width: 100%; background: #35d05a; border-radius: 5px; transition: width .2s; }
-.bar-fill.low { background: #e83b3b; }
-#message { position: absolute; top: 22%; left: 0; right: 0; text-align: center; font-size: 34px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 3px 8px rgba(0,0,0,.9); opacity: 0; transition: opacity .3s; }
-#messageSub { position: absolute; top: calc(22% + 46px); left: 0; right: 0; text-align: center; font-size: 17px; text-shadow: 0 2px 6px rgba(0,0,0,.9); opacity: 0; transition: opacity .3s; }
-#controlsHint { position: absolute; bottom: 8px; left: 0; right: 0; text-align: center; font-size: 11px; color: rgba(255,255,255,.55); text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+#hud { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 
-/* ---------- Start screen ---------- */
-#startScreen { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: flex-start; background: linear-gradient(90deg, rgba(5,10,20,.82) 0%, rgba(5,10,20,.55) 45%, rgba(5,10,20,0) 75%); }
-#titleBlock { margin-left: 7%; max-width: 520px; }
-#titleBlock h1 { font-size: 72px; letter-spacing: 6px; font-weight: 900; background: linear-gradient(180deg, #fff3b0, #ff9d5c); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: 0 4px 24px rgba(255,157,92,.25); }
-.tagline { font-size: 20px; font-style: italic; color: #ffd9a0; margin: 4px 0 16px; }
-.intro { font-size: 15px; line-height: 1.6; color: #e8e8e8; margin-bottom: 22px; }
-.buttons { display: flex; gap: 12px; margin-bottom: 22px; }
-button { pointer-events: auto; cursor: pointer; border: none; border-radius: 8px; padding: 13px 26px; font-size: 16px; font-weight: 800; letter-spacing: 1px; color: #1a1206; background: linear-gradient(180deg, #ffd23b, #f5a623); box-shadow: 0 4px 14px rgba(245,166,35,.4); transition: transform .1s, box-shadow .1s; }
-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(245,166,35,.55); }
-#continueBtn { background: linear-gradient(180deg, #e8e8e8, #b8b8b8); color: #222; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
-.controls { font-size: 13px; line-height: 1.8; color: #c8d4e0; background: rgba(0,0,0,.4); padding: 12px 16px; border-radius: 8px; }
-.foot { margin-top: 18px; font-size: 11px; color: rgba(255,255,255,.45); }
+#hud-objective {
+  position: absolute; top: 18px; left: 18px;
+  background: linear-gradient(90deg, rgba(20,8,32,0.82), rgba(20,8,32,0.55));
+  border-left: 4px solid #ffea00; border-radius: 4px;
+  padding: 9px 16px; font-size: 17px; font-weight: 600; letter-spacing: 0.3px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+}
+#hud-top-right { position: absolute; top: 16px; right: 20px; text-align: right; }
+#hud-stars { font-size: 26px; letter-spacing: 4px; color: rgba(255,255,255,0.55);
+  text-shadow: 0 2px 6px rgba(0,0,0,0.7); }
+#hud-stars.wanted { color: #ffd23f; }
+#hud-money { font-size: 30px; font-weight: 800; color: #5cff9d;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.8); margin-top: 2px; }
+#hud-clock { font-size: 20px; font-weight: 600; color: #fff;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
 
-/* ---------- Pause / banner ---------- */
-#pauseMenu, #banner { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(5,8,14,.72); }
-.menuBox { text-align: center; display: flex; flex-direction: column; gap: 12px; }
-.menuBox h2 { font-size: 44px; letter-spacing: 8px; margin-bottom: 12px; }
-.menuBox button { width: 280px; }
-#banner { background: rgba(10,5,5,.55); flex-direction: column; }
-#bannerTitle { font-size: 110px; font-weight: 900; letter-spacing: 14px; color: #fff; text-shadow: 0 6px 30px rgba(0,0,0,.9); }
-#bannerSub { font-size: 20px; color: #ffd9a0; margin-top: 10px; }
+#hud-bottom-left { position: absolute; left: 18px; bottom: 18px; display: flex; align-items: flex-end; gap: 14px; }
+#minimap { width: 168px; height: 168px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.85);
+  box-shadow: 0 0 0 3px rgba(0,0,0,0.45), 0 6px 22px rgba(0,0,0,0.55); }
+#hud-health { margin-bottom: 6px; }
+#hud-health-text { font-size: 17px; font-weight: 700; text-shadow: 0 2px 5px rgba(0,0,0,0.9); }
+.health-bar { width: 150px; height: 11px; margin-top: 4px; border-radius: 6px;
+  background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.35); overflow: hidden; }
+.health-fill { height: 100%; background: linear-gradient(90deg, #2bff88, #7dffb0); border-radius: 6px; }
+.health-fill.low { background: linear-gradient(90deg, #ff3b30, #ff8a5c); }
+
+#hud-bottom-right { position: absolute; right: 22px; bottom: 20px; text-align: right; }
+#hud-weapon { font-size: 20px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 6px rgba(0,0,0,0.9); }
+#hud-ammo { font-size: 16px; font-weight: 600; color: #ffd23f; text-shadow: 0 2px 5px rgba(0,0,0,0.9); }
+#hud-speed { font-size: 30px; font-weight: 800; color: #ffd23f; margin-top: 2px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9); }
+
+#mission-card {
+  position: absolute; top: 34%; left: 50%; transform: translateX(-50%);
+  text-align: center; text-shadow: 0 3px 14px rgba(0,0,0,0.9);
+  animation: card-in 0.4s ease-out;
+}
+@keyframes card-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+#mission-card-title { font-size: 44px; font-weight: 900; letter-spacing: 2px; }
+#mission-card-text { font-size: 19px; margin-top: 8px; color: #ffe9f2; }
+
+#hud-flash {
+  position: absolute; top: 22%; left: 50%; transform: translateX(-50%);
+  font-size: 30px; font-weight: 800; color: #5cff9d;
+  text-shadow: 0 3px 12px rgba(0,0,0,0.9);
+}
+#hud-message {
+  position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%);
+  background: rgba(20,8,32,0.8); border-radius: 6px; padding: 8px 18px;
+  font-size: 16px; font-weight: 600;
+}
+#hud-hints {
+  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+  font-size: 12.5px; color: rgba(255,255,255,0.72); white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+}
+
+/* Start screen */
+#start-screen {
+  position: absolute; inset: 0; z-index: 10;
+  background: linear-gradient(100deg, rgba(10,4,24,0.88) 0%, rgba(10,4,24,0.62) 46%, rgba(10,4,24,0.12) 78%, rgba(10,4,24,0) 100%);
+  display: flex; align-items: center; pointer-events: auto;
+}
+.start-inner { padding: 0 0 0 7vw; max-width: 620px; }
+.start-title {
+  font-size: 92px; line-height: 0.92; font-weight: 900; letter-spacing: 3px;
+  background: linear-gradient(180deg, #ffe259 8%, #ff7e5f 52%, #ff2e88 96%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 4px 18px rgba(255,46,136,0.45));
+}
+.start-sub { font-size: 30px; font-weight: 800; letter-spacing: 12px; color: #00e5ff;
+  margin-top: 8px; text-shadow: 0 0 18px rgba(0,229,255,0.8); }
+.start-tag { font-size: 21px; font-style: italic; color: #ffd9ec; margin-top: 16px; }
+.start-story { font-size: 16.5px; line-height: 1.55; color: #e8e2f5; margin-top: 10px; max-width: 520px; }
+.start-buttons { display: flex; gap: 14px; margin-top: 26px; }
+.btn-primary, .btn-secondary {
+  font-size: 18px; font-weight: 800; letter-spacing: 1px; cursor: pointer;
+  border: none; border-radius: 8px; padding: 14px 30px; pointer-events: auto;
+}
+.btn-primary { background: linear-gradient(180deg, #ffd23f, #ff9a3d); color: #221100;
+  box-shadow: 0 0 24px rgba(255,180,60,0.55); }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-secondary { background: rgba(255,255,255,0.14); color: #fff;
+  border: 1px solid rgba(255,255,255,0.4); }
+.btn-secondary:hover { background: rgba(255,255,255,0.24); }
+.start-controls {
+  margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 26px;
+  background: rgba(0,0,0,0.42); border-radius: 10px; padding: 14px 18px;
+  font-size: 14px; color: #d8d2e8; max-width: 480px;
+}
+.start-controls b { color: #fff; }
+.start-disclaimer { margin-top: 18px; font-size: 12px; color: rgba(255,255,255,0.55); }
+
+/* Pause / end screens */
+#pause-menu, .end-screen {
+  position: absolute; inset: 0; z-index: 10;
+  background: rgba(8,3,18,0.72); display: flex; align-items: center; justify-content: center;
+}
+.menu-panel { text-align: center; background: rgba(20,8,32,0.88); border-radius: 14px;
+  padding: 36px 54px; border: 1px solid rgba(255,255,255,0.18);
+  box-shadow: 0 12px 44px rgba(0,0,0,0.6); }
+.menu-panel h2 { font-size: 42px; font-weight: 900; letter-spacing: 3px; }
+.menu-panel p { margin: 12px 0 22px; color: #d8d2e8; font-size: 16px; }
+.menu-panel button { display: block; margin: 10px auto 0; min-width: 280px; }
+.busted-title { color: #4fc3f7; }
+.wasted-title { color: #ff5252; }
