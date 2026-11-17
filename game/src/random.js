@@ -1,8 +1,7 @@
-// Seeded random numbers (mulberry32) so the world, traffic and screenshots are
-// reproducible from a seed. Every system that needs randomness takes one of these.
-export function makeRng(seed) {
+// Seeded random numbers: every run with the same seed builds the same city.
+export function mulberry32(seed) {
   let a = seed >>> 0;
-  return function rng() {
+  return function next() {
     a |= 0; a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -10,24 +9,28 @@ export function makeRng(seed) {
   };
 }
 
-// Pick one element of an array with the given rng.
-export function pick(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
+export function makeRng(seed) {
+  const next = mulberry32(seed);
+  return {
+    next,
+    range(a, b) { return a + (b - a) * next(); },
+    int(a, b) { return Math.floor(a + (b - a + 1) * next()); },
+    pick(arr) { return arr[Math.floor(next() * arr.length)]; },
+    chance(p) { return next() < p; },
+    sign() { return next() < 0.5 ? -1 : 1; },
+  };
 }
 
-// Uniform float in [min, max).
-export function range(rng, min, max) {
-  return min + rng() * (max - min);
-}
-
-// Uniform integer in [min, max] inclusive.
-export function intRange(rng, min, max) {
-  return min + Math.floor(rng() * (max - min + 1));
-}
-
-// Read ?seed= from the URL, defaulting to 1.
+// Reads ?seed=N from the page URL, default 1. Screenshot runs pass seed=1.
 export function seedFromUrl() {
-  const v = new URLSearchParams(location.search).get('seed');
-  const n = v === null ? NaN : parseInt(v, 10);
-  return Number.isFinite(n) ? n : 1;
+  try {
+    const v = new URLSearchParams(window.location.search).get('seed');
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : 1;
+  } catch (e) { return 1; }
+}
+
+export function shotFromUrl() {
+  try { return new URLSearchParams(window.location.search).get('shot') || ''; }
+  catch (e) { return ''; }
 }

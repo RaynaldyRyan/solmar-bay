@@ -1,96 +1,89 @@
-// Effects: a small particle pool (sparks, smoke, hit puffs), tracer lines for
-// gunfire, and a reusable muzzle-flash light.
-export class Effects {
-  constructor(scene) {
-    this.scene = scene;
-    this.particles = [];   // {mesh, vel, life, maxLife, grow}
-    this.tracers = [];     // {line, life}
-    this.flash = new THREE.PointLight(0xffe08a, 0, 18);
-    this.scene.add(this.flash);
-    this.flashLife = 0;
-    this._sparkGeo = new THREE.SphereGeometry(0.09, 6, 5);
-    this._smokeGeo = new THREE.SphereGeometry(0.35, 8, 6);
+// Effects: pooled particles (sparks, smoke, muzzle flash), tracer lines and
+// a reusable flash light. Everything recycles — nothing allocates per frame.
+export function createEffects(scene) {
+  const MAX = 240;
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(MAX * 3);
+  const colors = new Float32Array(MAX * 3);
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.PointsMaterial({ size: 0.55, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+  scene.add(points);
+  const parts = [];
+  for (let i = 0; i < MAX; i++) parts.push({ alive: false, x: 0, y: -100, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, r: 1, g: 1, b: 1, grav: 0 });
+  let cursor = 0;
+
+  // tracers: short-lived glowing lines
+  const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 });
+  const tracers = [];
+
+  const flash = new THREE.PointLight(0xffc46b, 0, 18, 2);
+  scene.add(flash);
+  let flashTime = 0;
+
+  function spawn(x, y, z, vx, vy, vz, life, r, g, b, grav) {
+    const p = parts[cursor];
+    cursor = (cursor + 1) % MAX;
+    p.alive = true; p.x = x; p.y = y; p.z = z;
+    p.vx = vx; p.vy = vy; p.vz = vz;
+    p.life = life; p.max = life; p.r = r; p.g = g; p.b = b; p.grav = grav;
   }
 
-  _spawn(pos, vel, life, color, size, grow) {
-    const m = new THREE.Mesh(
-      size > 0.2 ? this._smokeGeo : this._sparkGeo,
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }),
-    );
-    m.position.copy(pos);
-    if (size > 0.2) m.scale.setScalar(size / 0.35);
-    this.scene.add(m);
-    this.particles.push({ mesh: m, vel, life, maxLife: life, grow });
-  }
-
-  sparks(pos, n = 8) {
-    for (let i = 0; i < n; i++) {
-      this._spawn(pos, new THREE.Vector3(
-        (Math.random() - 0.5) * 8, Math.random() * 6 + 1, (Math.random() - 0.5) * 8,
-      ), 0.4 + Math.random() * 0.3, 0xffcc44, 0.09, 0);
-    }
-  }
-
-  hitPuff(pos) {
-    for (let i = 0; i < 5; i++) {
-      this._spawn(pos, new THREE.Vector3(
-        (Math.random() - 0.5) * 3, Math.random() * 2, (Math.random() - 0.5) * 3,
-      ), 0.35, 0xdddddd, 0.12, 0);
-    }
-  }
-
-  smoke(pos) {
-    this._spawn(pos, new THREE.Vector3(
-      (Math.random() - 0.5) * 0.8, 1.2 + Math.random(), (Math.random() - 0.5) * 0.8,
-    ), 1.1, 0x555555, 0.5, 1.6);
-  }
-
-  // A tracer line from `from` to `to`, fading over 0.12s.
-  tracer(from, to) {
-    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
-      color: 0xffe9a8, transparent: true, opacity: 0.95,
-    }));
-    this.scene.add(line);
-    this.tracers.push({ line, life: 0.12 });
-  }
-
-  muzzle(pos) {
-    this.flash.position.copy(pos);
-    this.flash.intensity = 3.2;
-    this.flashLife = 0.06;
-  }
-
-  update(dt) {
-    if (this.flashLife > 0) {
-      this.flashLife -= dt;
-      if (this.flashLife <= 0) this.flash.intensity = 0;
-    }
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.life -= dt;
-      if (p.life <= 0) {
-        this.scene.remove(p.mesh);
-        p.mesh.material.dispose();
-        this.particles.splice(i, 1);
-        continue;
+  return {
+    burst(x, y, z, color, n, speed) {
+      const c = new THREE.Color(color);
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, up = Math.random() * 2 - 0.4;
+        const s = (speed || 6) * (0.4 + Math.random() * 0.8);
+        spawn(x, y, z, Math.cos(a) * s, up * s * 0.7, Math.sin(a) * s, 0.4 + Math.random() * 0.5, c.r, c.g, c.b, 9);
       }
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.vel.y -= 4 * dt;
-      if (p.grow) p.mesh.scale.multiplyScalar(1 + p.grow * dt);
-      p.mesh.material.opacity = Math.max(0, p.life / p.maxLife) * 0.9;
-    }
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const t = this.tracers[i];
-      t.life -= dt;
-      if (t.life <= 0) {
-        this.scene.remove(t.line);
-        t.line.geometry.dispose();
-        t.line.material.dispose();
-        this.tracers.splice(i, 1);
-      } else {
-        t.line.material.opacity = t.life / 0.12;
+    },
+    smoke(x, y, z) {
+      spawn(x, y, z, (Math.random() - 0.5) * 1.2, 1.6 + Math.random(), (Math.random() - 0.5) * 1.2, 1.1 + Math.random() * 0.6, 0.35, 0.35, 0.38, -1.5);
+    },
+    muzzle(x, y, z) {
+      flash.position.set(x, y, z);
+      flash.intensity = 2.2;
+      flashTime = 0.07;
+      this.burst(x, y, z, 0xffc46b, 5, 3);
+    },
+    tracer(ax, ay, az, bx, by, bz) {
+      const g = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(ax, ay, az), new THREE.Vector3(bx, by, bz),
+      ]);
+      const line = new THREE.Line(g, tracerMat);
+      scene.add(line);
+      tracers.push({ line, life: 0.09 });
+    },
+    update(dt) {
+      for (let i = 0; i < MAX; i++) {
+        const p = parts[i];
+        if (!p.alive) { positions[i * 3 + 1] = -100; continue; }
+        p.life -= dt;
+        if (p.life <= 0) { p.alive = false; positions[i * 3 + 1] = -100; continue; }
+        p.vy -= p.grav * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        if (p.y < 0.1) { p.y = 0.1; p.vy *= -0.3; }
+        positions[i * 3] = p.x; positions[i * 3 + 1] = p.y; positions[i * 3 + 2] = p.z;
+        const f = p.life / p.max;
+        colors[i * 3] = p.r * f; colors[i * 3 + 1] = p.g * f; colors[i * 3 + 2] = p.b * f;
       }
-    }
-  }
+      geo.attributes.position.needsUpdate = true;
+      geo.attributes.color.needsUpdate = true;
+      for (let i = tracers.length - 1; i >= 0; i--) {
+        tracers[i].life -= dt;
+        if (tracers[i].life <= 0) {
+          scene.remove(tracers[i].line);
+          tracers[i].line.geometry.dispose();
+          tracers.splice(i, 1);
+        }
+      }
+      if (flashTime > 0) {
+        flashTime -= dt;
+        if (flashTime <= 0) flash.intensity = 0;
+      }
+    },
+  };
 }

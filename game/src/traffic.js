@@ -1,148 +1,99 @@
 // Traffic: cars that drive the road grid in lanes, brake for the car ahead,
-// turn at intersections and U-turn at the city edge. Parked cars sit by curbs.
-import { ROADS, CAR_KEYS, WORLD_BOUND } from './config.js';
-import { Car } from './vehicles.js';
-import { pick, range, intRange } from './random.js';
+// and turn at intersections. They give the city life and the chase something
+// to weave through.
+import { CFG } from './config.js';
+import { CAR_ARCHETYPES } from './config.js';
+import { createCar } from './vehicles.js';
 
-const LANE = 3; // right-hand lane offset from the road centre
+const ROAD_COORDS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
 
-export class Traffic {
-  constructor(scene, city, rng, count = 14) {
-    this.scene = scene;
-    this.city = city;
-    this.rng = rng;
-    this.cars = [];    // {car, axis, road, dir, speed, target}
-    this.parked = [];  // Car instances parked by curbs
-    this.spawnAll(count);
-    this.spawnParked(10);
+export function createTraffic(scene, city, rng) {
+  const cars = [];
+  const keys = Object.keys(CAR_ARCHETYPES);
+
+  function spawnCar() {
+    const horizontal = rng.chance(0.5);
+    const road = rng.pick(ROAD_COORDS);
+    const dir = rng.sign();
+    const lane = 3; // right-hand lane offset
+    const along = rng.range(-200, 200);
+    const arch = rng.pick(keys);
+    const color = rng.pick(CAR_ARCHETYPES[arch].colors);
+    // lane offset is perpendicular to travel, on the right-hand side
+    const lx = horizontal ? along : road + (dir > 0 ? lane : -lane);
+    const lz = horizontal ? road + (dir > 0 ? -lane : lane) : along;
+    const angle = horizontal ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
+    const car = createCar(scene, arch, color, lx, lz, angle, false);
+    car.userData = {
+      horizontal, road, dir,
+      cruise: rng.range(9, 14),
+      turnCooldown: rng.range(2, 8),
+    };
+    cars.push(car);
+    return car;
   }
 
-  spawnAll(count) {
-    for (let i = 0; i < count; i++) this.spawnOne(true);
+  for (let i = 0; i < 14; i++) spawnCar();
+
+  // nearest road coordinate to a value
+  function nearestRoad(v) {
+    let best = ROAD_COORDS[0], bd = 1e9;
+    for (const r of ROAD_COORDS) { const d = Math.abs(v - r); if (d < bd) { bd = d; best = r; } }
+    return best;
   }
 
-  // A traffic car on a random road, random direction, random lane side.
-  spawnOne(anywhere) {
-    const rng = this.rng;
-    const axis = rng() < 0.5 ? 'x' : 'z';
-    const road = pick(rng, ROADS);
-    const dir = rng() < 0.5 ? 1 : -1;
-    const along = anywhere ? range(rng, -150, 150) : range(rng, 60, 150) * (rng() < 0.5 ? -1 : 1);
-    const key = pick(rng, CAR_KEYS);
-    let x, z, heading;
-    if (axis === 'x') {
-      x = along; z = road + LANE * dir;
-      heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-    } else {
-      x = road - LANE * dir; z = along;
-      heading = dir > 0 ? 0 : Math.PI;
-    }
-    const car = new Car(this.scene, key, x, z, heading);
-    car.occupied = true;
-    this.cars.push({
-      car, axis, road, dir,
-      speed: range(rng, 9, 14),
-      turnCooldown: range(rng, 2, 8),
-    });
-  }
-
-  spawnParked(count) {
-    const rng = this.rng;
-    for (let i = 0; i < count; i++) {
-      const road = pick(rng, ROADS);
-      const along = range(rng, -140, 140);
-      const side = rng() < 0.5 ? -1 : 1;
-      const horizontal = rng() < 0.5;
-      const key = pick(rng, CAR_KEYS);
-      let x, z, heading;
-      if (horizontal) {
-        x = along; z = road + side * 5.2;
-        heading = side > 0 ? Math.PI / 2 : -Math.PI / 2;
-      } else {
-        x = road + side * 5.2; z = along;
-        heading = side > 0 ? 0 : Math.PI;
-      }
-      if (this.city.insideCollider(x, z, 2)) continue;
-      const car = new Car(this.scene, key, x, z, heading);
-      this.parked.push(car);
-    }
-  }
-
-  // All cars the player could steal or crash into.
-  allCars() {
-    return [...this.cars.map((t) => t.car), ...this.parked];
-  }
-
-  update(dt, playerPos) {
-    for (const t of this.cars) {
-      const { car } = t;
-      t.turnCooldown -= dt;
-      // car ahead? brake.
-      let blocked = false;
-      const f = car.forward();
-      for (const o of this.cars) {
-        if (o === t) continue;
-        const dx = o.car.x - car.x, dz = o.car.z - car.z;
-        const ahead = dx * f.x + dz * f.z;
-        const side = Math.abs(-dx * f.z + dz * f.x);
-        if (ahead > 0 && ahead < 9 && side < 2.4) { blocked = true; break; }
-      }
-      const throttle = blocked ? -0.4 : 1;
-      // steer back onto the lane
-      let steer = 0;
-      if (t.axis === 'x') {
-        const want = t.road + LANE * t.dir;
-        steer = (want - car.z) * 0.08 * t.dir;
-      } else {
-        const want = t.road - LANE * t.dir;
-        steer = -(want - car.x) * 0.08 * t.dir;
-      }
-      // maybe turn at an intersection
-      const onIntersection = ROADS.some((r) => Math.abs((t.axis === 'x' ? car.x : car.z) - r) < 3);
-      if (onIntersection && t.turnCooldown <= 0 && this.rng() < 0.3) {
-        t.turnCooldown = range(this.rng, 4, 10);
-        const other = pick(this.rng, ROADS);
-        if (t.axis === 'x') {
-          t.axis = 'z'; t.road = Math.round(car.x / 40) * 40;
-          t.dir = this.rng() < 0.5 ? 1 : -1;
-        } else {
-          t.axis = 'x'; t.road = Math.round(car.z / 40) * 40;
-          t.dir = this.rng() < 0.5 ? 1 : -1;
+  return {
+    cars,
+    update(dt, playerCar) {
+      for (const car of cars) {
+        const u = car.userData;
+        const along = u.horizontal ? car.pos.x : car.pos.z;
+        const across = u.horizontal ? car.pos.z : car.pos.x;
+        // follow the car ahead smoothly: match its speed and keep a gap,
+        // instead of braking to a stop on its bumper
+        let gapTarget = u.cruise;
+        const all = playerCar ? cars.concat([playerCar]) : cars;
+        for (const other of all) {
+          if (other === car) continue;
+          const od = u.horizontal ? other.pos.z - car.pos.z : other.pos.x - car.pos.x;
+          const oa = u.horizontal ? other.pos.x - car.pos.x : other.pos.z - car.pos.z;
+          const gap = oa * u.dir;
+          if (Math.abs(od) < 2.2 && gap > 0 && gap < 20) {
+            const follow = Math.max(0, other.speed * Math.min(1, (gap - 6) / 8));
+            gapTarget = Math.min(gapTarget, follow);
+          }
+        }
+        // steer back to the lane center
+        const targetAcross = u.road + (u.dir > 0 ? 3 : -3) * (u.horizontal ? -1 : 1);
+        const err = targetAcross - across;
+        const desiredAngle = u.horizontal
+          ? (u.dir > 0 ? Math.PI / 2 : -Math.PI / 2) + (u.dir > 0 ? -err : err) * 0.06
+          : (u.dir > 0 ? 0 : Math.PI) + (u.dir > 0 ? err : -err) * 0.06;
+        let da = desiredAngle - car.angle;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        const steer = Math.max(-1, Math.min(1, da * 2.2));
+        const throttle = car.speed < gapTarget - 0.3 ? 0.7 : (car.speed > gapTarget + 0.5 ? -1 : 0);
+        car.update(dt, throttle, steer, false, city, null);
+        // turn at an intersection sometimes
+        u.turnCooldown -= dt;
+        const nearCross = Math.abs(along - nearestRoad(along)) < 2;
+        if (nearCross && u.turnCooldown <= 0 && rng.chance(0.5)) {
+          u.turnCooldown = rng.range(4, 10);
+          const cross = nearestRoad(along);
+          const newDir = rng.sign();
+          u.horizontal = !u.horizontal;
+          u.road = cross;
+          u.dir = newDir;
+        }
+        // respawn if it wandered off the grid or got wrecked
+        if (Math.abs(car.pos.x) > 320 || Math.abs(car.pos.z) > 320 || car.health <= 0) {
+          car.remove();
+          const idx = cars.indexOf(car);
+          cars.splice(idx, 1);
+          spawnCar();
         }
       }
-      // U-turn at the city edge
-      const along = t.axis === 'x' ? car.x : car.z;
-      if (along * t.dir > WORLD_BOUND - 12) {
-        t.dir *= -1;
-        car.heading += Math.PI;
-      }
-      // cap traffic speed below the car's top speed
-      const prev = car.spec.topSpeed;
-      car.spec = { ...car.spec, topSpeed: t.speed };
-      car.drive(throttle, Math.max(-1, Math.min(1, steer)), false, dt);
-      car.spec = { ...car.spec, topSpeed: prev };
-      // keep on the road: soft push back toward the lane
-      const fixed = this.city.collideCircle(car.x, car.z, 1.6);
-      car.x = fixed.x; car.z = fixed.z;
-      car.mesh.position.set(car.x, 0, car.z);
-      // recycle far-away cars near the player
-      const d = Math.hypot(car.x - playerPos.x, car.z - playerPos.z);
-      if (d > 260) {
-        const axis = this.rng() < 0.5 ? 'x' : 'z';
-        const road = pick(this.rng, ROADS);
-        const dir = this.rng() < 0.5 ? 1 : -1;
-        const near = range(this.rng, 60, 120);
-        if (axis === 'x') {
-          car.x = playerPos.x + near * (this.rng() < 0.5 ? -1 : 1);
-          car.z = road + LANE * dir;
-          car.heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-        } else {
-          car.x = road - LANE * dir;
-          car.z = playerPos.z + near * (this.rng() < 0.5 ? -1 : 1);
-          car.heading = dir > 0 ? 0 : Math.PI;
-        }
-        t.axis = axis; t.road = road; t.dir = dir;
-      }
-    }
-  }
+    },
+  };
 }

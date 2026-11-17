@@ -1,78 +1,50 @@
-// Keyboard + mouse input state. Keys are tracked by code; the mouse steers the
-// camera while the pointer is locked, and clicks fire the current weapon.
-export class Input {
-  constructor() {
-    this.keys = new Set();
-    this.mouseDX = 0;
-    this.mouseDY = 0;
-    this.mouseDown = false;
-    this.clicked = false;       // set true on a fresh click, cleared by the game
-    this.locked = false;
-    this.onKey = null;          // (code) => void, for one-shot keys
-    this._bound = [];
-    this._listen('keydown', (e) => {
-      if (e.repeat) return;
-      this.keys.add(e.code);
-      if (this.onKey) this.onKey(e.code);
-      if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
-    });
-    this._listen('keyup', (e) => this.keys.delete(e.code));
-    this._listen('blur', () => this.keys.clear());
-    this._listen('mousemove', (e) => {
-      if (!this.locked) return;
-      this.mouseDX += e.movementX || 0;
-      this.mouseDY += e.movementY || 0;
-    });
-    this._listen('mousedown', (e) => {
-      if (e.button !== 0) return;
-      this.mouseDown = true;
-      this.clicked = true;
-    });
-    this._listen('mouseup', (e) => { if (e.button === 0) this.mouseDown = false; });
-    document.addEventListener('pointerlockchange', () => {
-      this.locked = document.pointerLockElement === document.body;
-    });
-  }
+// Keyboard + mouse input. Mouse orbit works with pointer lock when the
+// player clicks the canvas, and falls back to drag-to-look otherwise.
+export function createInput(canvas) {
+  const keys = new Set();
+  let mouseDX = 0, mouseDY = 0, dragging = false, lastX = 0, lastY = 0;
+  let locked = false;
 
-  _listen(type, fn) {
-    window.addEventListener(type, fn);
-    this._bound.push([type, fn]);
-  }
+  window.addEventListener('keydown', (e) => {
+    if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+    keys.add(e.code);
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
+  window.addEventListener('blur', () => keys.clear());
 
-  down(code) { return this.keys.has(code); }
-
-  // -1/0/1 drive axis: W/S or Up/Down.
-  driveAxis() {
-    return (this.down('KeyW') || this.down('ArrowUp') ? 1 : 0)
-      - (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0);
-  }
-
-  // -1/0/1 steer axis: A/D or Left/Right.
-  steerAxis() {
-    return (this.down('KeyD') || this.down('ArrowRight') ? 1 : 0)
-      - (this.down('KeyA') || this.down('ArrowLeft') ? 1 : 0);
-  }
-
-  lockPointer() {
-    if (!this.locked && document.body.requestPointerLock) {
-      document.body.requestPointerLock();
+  canvas.addEventListener('click', () => {
+    if (!locked && document.pointerLockElement !== canvas) {
+      try { canvas.requestPointerLock(); } catch (e) { /* drag fallback */ }
     }
-  }
+  });
+  document.addEventListener('pointerlockchange', () => {
+    locked = document.pointerLockElement === canvas;
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (locked) { mouseDX += e.movementX; mouseDY += e.movementY; }
+    else if (dragging) { mouseDX += e.clientX - lastX; mouseDY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; }
+  });
+  canvas.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup', () => { dragging = false; });
 
-  unlockPointer() {
-    if (document.exitPointerLock) document.exitPointerLock();
-  }
-
-  // Consume the accumulated mouse movement since the last frame.
-  takeMouse() {
-    const dx = this.mouseDX, dy = this.mouseDY;
-    this.mouseDX = 0; this.mouseDY = 0;
-    return { dx, dy };
-  }
-
-  takeClick() {
-    const c = this.clicked;
-    this.clicked = false;
-    return c;
-  }
+  return {
+    isDown(code) { return keys.has(code); },
+    // One-shot key check: true only on the first frame the key is down.
+    pressed(code) {
+      if (keys.has(code) && !this._wasDown.has(code)) { this._wasDown.add(code); return true; }
+      if (!keys.has(code)) this._wasDown.delete(code);
+      return false;
+    },
+    _wasDown: new Set(),
+    takeMouse() { const d = { x: mouseDX, y: mouseDY }; mouseDX = 0; mouseDY = 0; return d; },
+    axis() {
+      // returns {x: strafe/steer -1..1, y: forward -1..1}
+      let x = 0, y = 0;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) y += 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) y -= 1;
+      return { x, y };
+    },
+  };
 }

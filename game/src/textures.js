@@ -1,141 +1,164 @@
-// Procedural textures drawn on offscreen canvases: building facades with lit
-// windows, road asphalt with lane dashes, sand, grass and water. No image files.
-function canvasTexture(w, h, draw) {
+// Procedural canvas textures: facades with lit windows and neon trim, asphalt
+// with lane markings, sand, ocean shimmer, neon signs and the striped sun.
+// Everything is generated at load, so the game needs no image files.
+import { PALETTE } from './config.js';
+
+function canvas(w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  return tex;
+  return [c, c.getContext('2d')];
 }
 
-// A building facade: pastel base, a grid of windows, some lit warm.
-export function facadeTexture(base, litRatio, rng) {
-  return canvasTexture(128, 256, (g) => {
-    g.fillStyle = base;
-    g.fillRect(0, 0, 128, 256);
-    // subtle vertical shading strips
-    g.fillStyle = 'rgba(0,0,0,0.06)';
-    for (let x = 0; x < 128; x += 16) g.fillRect(x, 0, 2, 256);
-    const cols = 4, rows = 10;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const lit = rng() < litRatio;
-        g.fillStyle = lit ? '#ffd98a' : '#2e4a66';
-        g.fillRect(10 + c * 28, 12 + r * 24, 18, 14);
-        g.fillStyle = 'rgba(255,255,255,0.25)';
-        g.fillRect(10 + c * 28, 12 + r * 24, 18, 3);
+function toTexture(c, repeat) {
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.anisotropy = 4;
+  if (repeat) { t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
+  return t;
+}
+
+// A building facade: pastel base, a grid of windows (some glowing warm at
+// dusk), a darker ground floor with a shopfront, and a neon trim strip.
+export function makeFacadeTexture(rng, base, trim) {
+  const [c, g] = canvas(256, 256);
+  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
+  // subtle vertical shading so the wall is not one flat tone
+  const grad = g.createLinearGradient(0, 0, 256, 0);
+  grad.addColorStop(0, 'rgba(0,0,0,0.14)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.06)'); grad.addColorStop(1, 'rgba(0,0,0,0.14)');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  // window grid
+  const cols = 5, rows = 6, ww = 30, wh = 26, gx = 14, gy = 12, sx = 44, sy = 34;
+  for (let r = 0; r < rows; r++) {
+    for (let col = 0; col < cols; col++) {
+      const x = gx + col * sx, y = gy + r * sy;
+      const lit = rng.chance(0.55);
+      g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(x - 2, y - 2, ww + 4, wh + 4);
+      if (lit) {
+        g.fillStyle = rng.pick(['#ffd97a', '#ffe9b0', '#ffb46b', '#fff3c4']);
+        g.fillRect(x, y, ww, wh);
+        g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(x, y, ww, 5);
+      } else {
+        g.fillStyle = '#1d2b45'; g.fillRect(x, y, ww, wh);
+        g.fillStyle = 'rgba(140,190,255,0.35)'; g.fillRect(x, y, ww, 8);
       }
+      g.fillStyle = 'rgba(0,0,0,0.4)'; g.fillRect(x + ww / 2 - 1, y, 2, wh);
     }
-    // ground-floor shopfront band
-    g.fillStyle = 'rgba(20,30,40,0.55)';
-    g.fillRect(0, 232, 128, 24);
-    g.fillStyle = '#ffd98a';
-    g.fillRect(8, 238, 40, 12);
-    g.fillRect(72, 238, 48, 12);
-  });
+  }
+  // ground floor shopfront
+  g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(0, 224, 256, 32);
+  g.fillStyle = trim; g.fillRect(0, 220, 256, 4);
+  g.fillStyle = 'rgba(255,255,255,0.85)';
+  g.fillRect(20, 232, 60, 18); g.fillRect(100, 232, 60, 18); g.fillRect(180, 232, 56, 18);
+  // neon roofline trim
+  g.fillStyle = trim; g.fillRect(0, 0, 256, 5);
+  g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillRect(0, 5, 256, 1);
+  return toTexture(c);
 }
 
-// Asphalt with a dashed centre line and edge lines.
-export function roadTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.fillStyle = '#3d4148';
-    g.fillRect(0, 0, 128, 128);
-    g.fillStyle = 'rgba(255,255,255,0.05)';
-    for (let i = 0; i < 300; i++) {
-      g.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
-    }
-    g.fillStyle = '#e8d44d';
-    for (let y = 0; y < 128; y += 32) g.fillRect(62, y + 4, 4, 18);
-    g.fillStyle = '#d8d8d8';
-    g.fillRect(4, 0, 3, 128);
-    g.fillRect(121, 0, 3, 128);
-  });
+// Dark asphalt with a dashed center line and edge lines.
+export function makeAsphaltTexture() {
+  const [c, g] = canvas(128, 128);
+  g.fillStyle = PALETTE.road; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 900; i++) {
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.25)';
+    g.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
+  }
+  g.fillStyle = '#f5c542'; g.fillRect(62, 8, 4, 44); g.fillRect(62, 76, 4, 44);
+  g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillRect(4, 0, 3, 128); g.fillRect(121, 0, 3, 128);
+  return toTexture(c, [1, 1]);
 }
 
-// Crosswalk stripes.
-export function crosswalkTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.fillStyle = '#3d4148';
-    g.fillRect(0, 0, 128, 128);
-    g.fillStyle = '#e8e8e8';
-    for (let x = 8; x < 128; x += 24) g.fillRect(x, 10, 12, 108);
-  });
+export function makeSidewalkTexture() {
+  const [c, g] = canvas(128, 128);
+  g.fillStyle = PALETTE.sidewalk; g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 2;
+  for (let i = 0; i <= 4; i++) {
+    g.beginPath(); g.moveTo(i * 32, 0); g.lineTo(i * 32, 128); g.stroke();
+    g.beginPath(); g.moveTo(0, i * 32); g.lineTo(128, i * 32); g.stroke();
+  }
+  for (let i = 0; i < 300; i++) {
+    g.fillStyle = 'rgba(0,0,0,0.08)'; g.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
+  }
+  return toTexture(c, [1, 1]);
 }
 
-export function sidewalkTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.fillStyle = '#b9b3a4';
-    g.fillRect(0, 0, 128, 128);
-    g.strokeStyle = 'rgba(0,0,0,0.18)';
-    g.lineWidth = 2;
-    for (let i = 0; i <= 128; i += 32) {
-      g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 128); g.stroke();
-      g.beginPath(); g.moveTo(0, i); g.lineTo(128, i); g.stroke();
-    }
-  });
+export function makeSandTexture() {
+  const [c, g] = canvas(128, 128);
+  g.fillStyle = PALETTE.sand; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 1200; i++) {
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(180,140,80,0.25)' : 'rgba(255,255,255,0.25)';
+    g.fillRect(Math.random() * 128, Math.random() * 128, 2, 1);
+  }
+  return toTexture(c, [8, 8]);
 }
 
-export function sandTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.fillStyle = '#ecd9a0';
-    g.fillRect(0, 0, 128, 128);
-    g.fillStyle = 'rgba(180,150,90,0.35)';
-    for (let i = 0; i < 400; i++) {
-      g.fillRect(Math.random() * 128, Math.random() * 128, 2, 1);
-    }
-  });
+export function makeOceanTexture() {
+  const [c, g] = canvas(256, 256);
+  const grad = g.createLinearGradient(0, 0, 256, 256);
+  grad.addColorStop(0, '#274b8f'); grad.addColorStop(0.5, '#1a3a6b'); grad.addColorStop(1, '#2b1d5e');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 260; i++) {
+    g.strokeStyle = `rgba(150,200,255,${0.05 + Math.random() * 0.16})`;
+    g.lineWidth = 1 + Math.random() * 2;
+    const x = Math.random() * 256, y = Math.random() * 256, w = 12 + Math.random() * 40;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + w, y); g.stroke();
+  }
+  return toTexture(c, [10, 10]);
 }
 
-export function grassTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.fillStyle = '#6fae4e';
-    g.fillRect(0, 0, 128, 128);
-    g.fillStyle = 'rgba(255,255,255,0.08)';
-    for (let i = 0; i < 500; i++) {
-      g.fillRect(Math.random() * 128, Math.random() * 128, 2, 3);
-    }
-    g.fillStyle = 'rgba(40,90,30,0.25)';
-    for (let i = 0; i < 200; i++) {
-      g.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
-    }
-  });
+// A neon sign: glowing text on a dark panel. Used as an emissive map too.
+export function makeNeonSignTexture(text, color) {
+  const [c, g] = canvas(256, 96);
+  g.fillStyle = '#12081f'; g.fillRect(0, 0, 256, 96);
+  g.strokeStyle = color; g.lineWidth = 3; g.strokeRect(4, 4, 248, 88);
+  g.font = 'bold 34px Arial, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.shadowColor = color; g.shadowBlur = 18;
+  g.fillStyle = '#ffffff';
+  g.fillText(text, 128, 50);
+  g.shadowBlur = 8; g.fillStyle = color;
+  g.fillText(text, 128, 50);
+  return toTexture(c);
 }
 
-export function waterTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.fillStyle = '#2e7fa8';
-    g.fillRect(0, 0, 128, 128);
-    g.strokeStyle = 'rgba(255,255,255,0.25)';
-    g.lineWidth = 2;
-    for (let i = 0; i < 12; i++) {
-      const y = Math.random() * 128;
-      g.beginPath();
-      g.moveTo(Math.random() * 100, y);
-      g.quadraticCurveTo(64, y + 6, 128, y);
-      g.stroke();
-    }
-  });
+// The synthwave sun: a striped gradient disc.
+export function makeSunTexture() {
+  const [c, g] = canvas(256, 256);
+  const grad = g.createLinearGradient(0, 20, 0, 236);
+  grad.addColorStop(0, '#ffe259'); grad.addColorStop(0.45, '#ff7e5f'); grad.addColorStop(1, '#ff2e88');
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(128, 128, 118, 0, Math.PI * 2); g.fill();
+  // horizontal slits, wider toward the bottom
+  g.globalCompositeOperation = 'destination-out';
+  let y = 150, h = 4;
+  while (y < 250) { g.fillRect(0, y, 256, h); y += h + 12; h += 3; }
+  g.globalCompositeOperation = 'source-over';
+  return toTexture(c);
 }
 
-// A palm frond sprite (alpha) for cheap leafy trees.
-export function palmTexture() {
-  return canvasTexture(128, 128, (g) => {
-    g.clearRect(0, 0, 128, 128);
-    g.strokeStyle = '#3f8f3a';
-    g.lineWidth = 7;
-    g.lineCap = 'round';
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      g.beginPath();
-      g.moveTo(64, 64);
-      g.quadraticCurveTo(
-        64 + Math.cos(a) * 40, 64 + Math.sin(a) * 40 - 12,
-        64 + Math.cos(a) * 60, 64 + Math.sin(a) * 60 + 14,
-      );
-      g.stroke();
-    }
-  });
+// Soft radial glow sprite (for lamps, headlights, the sun halo).
+export function makeGlowTexture() {
+  const [c, g] = canvas(128, 128);
+  const grad = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return toTexture(c);
+}
+
+// A palm frond: a tapered green blade with a center rib.
+export function makeFrondTexture() {
+  const [c, g] = canvas(64, 128);
+  g.clearRect(0, 0, 64, 128);
+  g.fillStyle = '#1f7a3d';
+  g.beginPath();
+  g.moveTo(32, 0);
+  g.quadraticCurveTo(60, 50, 34, 128);
+  g.quadraticCurveTo(32, 120, 30, 128);
+  g.quadraticCurveTo(4, 50, 32, 0);
+  g.fill();
+  g.strokeStyle = '#2fae5f'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(32, 4); g.lineTo(32, 126); g.stroke();
+  return toTexture(c);
 }

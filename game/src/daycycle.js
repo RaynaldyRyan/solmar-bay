@@ -1,54 +1,65 @@
-// Day cycle: the sun travels across the sky, golden hour at start, with
-// matching sky colour, fog and light intensity. The in-game clock runs 1 game
-// minute per real second by default.
-export class DayCycle {
-  constructor(scene) {
-    this.scene = scene;
-    this.timeOfDay = 17.5;      // 17:30 — golden hour
-    this.speed = 1 / 60;        // game-hours per real second (1 min/sec)
-    this.sun = new THREE.DirectionalLight(0xffe0b0, 1.1);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.camera.left = -220;
-    this.sun.shadow.camera.right = 220;
-    this.sun.shadow.camera.top = 220;
-    this.sun.shadow.camera.bottom = -220;
-    this.sun.shadow.camera.far = 600;
-    this.scene.add(this.sun);
-    this.scene.add(this.sun.target);
-    this.ambient = new THREE.AmbientLight(0xbfd4e6, 0.55);
-    this.scene.add(this.ambient);
-    this.scene.fog = new THREE.Fog(0xffd9a0, 180, 480);
-    this.update(0);
-  }
+// Day cycle: the clock starts at dusk (18:24) so the neon reads, then rolls
+// through night, dawn and a full day. Exposes the sun direction and the
+// light colors the renderer and sky use each frame.
+import { CFG, clamp, lerp } from './config.js';
 
-  clockText() {
-    const h = Math.floor(this.timeOfDay) % 24;
-    const m = Math.floor((this.timeOfDay % 1) * 60);
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  }
+const KEYFRAMES = [
+  // hour, sun elevation (deg), sun color, sky top, sky horizon, fog, ambient
+  { h: 0,  el: -25, sun: 0x334466, top: 0x0b1026, hor: 0x1b2340, fog: 0x141a2e, amb: 0.35 },
+  { h: 5,  el: -8,  sun: 0x8877aa, top: 0x1a2040, hor: 0x4a3a6b, fog: 0x2a2440, amb: 0.4 },
+  { h: 7,  el: 12,  sun: 0xffb36b, top: 0x3a6ea5, hor: 0xff9e7d, fog: 0xc98a7a, amb: 0.6 },
+  { h: 12, el: 62,  sun: 0xfff2cc, top: 0x2f7fc4, hor: 0x9fd8ef, fog: 0xa8d4e8, amb: 0.85 },
+  { h: 17, el: 28,  sun: 0xffd27a, top: 0x3a6fc0, hor: 0xff8a7a, fog: 0xd8b28e, amb: 0.8 },
+  { h: 18.4, el: 8, sun: 0xff8a5c, top: 0x2b2a6b, hor: 0xf24d8a, fog: 0x74486b, amb: 0.62 },
+  { h: 19.5, el: -4, sun: 0xff5c8a, top: 0x1a1440, hor: 0xd6457d, fog: 0x4a2a55, amb: 0.5 },
+  { h: 21, el: -16, sun: 0x445588, top: 0x0d1230, hor: 0x2a2050, fog: 0x1c1838, amb: 0.42 },
+  { h: 24, el: -25, sun: 0x334466, top: 0x0b1026, hor: 0x1b2340, fog: 0x141a2e, amb: 0.35 },
+];
 
-  update(dt) {
-    this.timeOfDay = (this.timeOfDay + dt * this.speed) % 24;
-    // sun angle: 6:00 = sunrise east, 18:00 = sunset west
-    const ang = ((this.timeOfDay - 6) / 12) * Math.PI;
-    const elev = Math.sin(ang);
-    const az = Math.cos(ang);
-    this.sun.position.set(az * 260, Math.max(8, elev * 260), 60);
-    // warm at low sun, white at noon
-    const warm = Math.max(0, 1 - Math.abs(elev) * 1.4);
-    const r = 1, g = 1 - warm * 0.25, b = 1 - warm * 0.55;
-    this.sun.color.setRGB(r, g, b);
-    this.sun.intensity = 0.35 + Math.max(0, elev) * 0.85;
-    this.ambient.intensity = 0.35 + Math.max(0, elev) * 0.3;
-    // sky: golden at dusk, blue at day, dark at night
-    const sky = new THREE.Color();
-    if (elev > 0.25) sky.setHex(0x87bfe8);
-    else if (elev > -0.05) sky.setHex(0xffc07a);
-    else sky.setHex(0x1a2440);
-    this.scene.background = sky;
-    this.scene.fog.color.copy(sky);
-    this.scene.fog.near = 180;
-    this.scene.fog.far = elev > 0 ? 480 : 320;
+function sample(hour) {
+  let a = KEYFRAMES[0], b = KEYFRAMES[KEYFRAMES.length - 1];
+  for (let i = 0; i < KEYFRAMES.length - 1; i++) {
+    if (hour >= KEYFRAMES[i].h && hour <= KEYFRAMES[i + 1].h) { a = KEYFRAMES[i]; b = KEYFRAMES[i + 1]; break; }
   }
+  const t = b.h === a.h ? 0 : clamp((hour - a.h) / (b.h - a.h), 0, 1);
+  const mix = (ca, cb) => {
+    const A = new THREE.Color(ca), B = new THREE.Color(cb);
+    return A.lerp(B, t);
+  };
+  return {
+    elevation: lerp(a.el, b.el, t),
+    sunColor: mix(a.sun, b.sun),
+    skyTop: mix(a.top, b.top),
+    skyHorizon: mix(a.hor, b.hor),
+    fogColor: mix(a.fog, b.fog),
+    ambient: lerp(a.amb, b.amb, t),
+  };
+}
+
+export function createDayCycle(startHour) {
+  let hour = startHour !== undefined ? startHour : CFG.DAY_START_HOUR;
+  return {
+    get hour() { return hour; },
+    set hour(h) { hour = ((h % 24) + 24) % 24; },
+    clockText() {
+      const h = Math.floor(hour), m = Math.floor((hour - h) * 60);
+      return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    },
+    update(dt) {
+      hour += dt * (24 / CFG.DAY_LENGTH_SEC);
+      if (hour >= 24) hour -= 24;
+    },
+    // Sun direction: rises in the east (+x, over the ocean), sets west.
+    sunDirection() {
+      const s = sample(hour);
+      const az = (hour / 24) * Math.PI * 2 - Math.PI / 2;
+      const el = s.elevation * Math.PI / 180;
+      return {
+        dir: new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el) * 0.4),
+        ...s,
+      };
+    },
+    isNight() { return hour < 6 || hour >= 19.5; },
+    isDusk() { return hour >= 17.5 && hour < 20; },
+  };
 }
