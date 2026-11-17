@@ -1,95 +1,96 @@
-// Solmar Bay — particle effects.
-// One clear job: short-lived sprites for damage smoke, muzzle sparks, impact
-// puffs, pickup sparkles and skid dust, pooled and updated in one place.
-
-import { softDiscTexture } from './textures.js';
-
+// Effects: a small particle pool (sparks, smoke, hit puffs), tracer lines for
+// gunfire, and a reusable muzzle-flash light.
 export class Effects {
   constructor(scene) {
     this.scene = scene;
-    this.particles = [];
-    this.tex = softDiscTexture();
-    this.pool = [];
+    this.particles = [];   // {mesh, vel, life, maxLife, grow}
+    this.tracers = [];     // {line, life}
+    this.flash = new THREE.PointLight(0xffe08a, 0, 18);
+    this.scene.add(this.flash);
+    this.flashLife = 0;
+    this._sparkGeo = new THREE.SphereGeometry(0.09, 6, 5);
+    this._smokeGeo = new THREE.SphereGeometry(0.35, 8, 6);
   }
 
-  spawn(x, y, z, opts = {}) {
-    const {
-      color = 0xcccccc, count = 8, speed = 2, life = 0.8,
-      size = 0.7, gravity = 0, spread = 1, dir = null,
-    } = opts;
-    for (let i = 0; i < count; i++) {
-      let p = this.pool.pop();
-      if (!p) {
-        const mat = new THREE.SpriteMaterial({
-          map: this.tex, transparent: true, depthWrite: false,
-        });
-        p = new THREE.Sprite(mat);
-        this.scene.add(p);
-      }
-      p.material.color.setHex(color);
-      p.material.opacity = 0.9;
-      p.position.set(
-        x + (Math.random() - 0.5) * spread,
-        y + (Math.random() - 0.5) * spread * 0.5,
-        z + (Math.random() - 0.5) * spread,
-      );
-      const a = Math.random() * Math.PI * 2;
-      const up = dir ? 0 : Math.random() * 1.5;
-      p.userData.vx = dir ? dir.x * speed : Math.cos(a) * speed * 0.6;
-      p.userData.vy = dir ? dir.y * speed : up;
-      p.userData.vz = dir ? dir.z * speed : Math.sin(a) * speed * 0.6;
-      p.userData.life = life * (0.6 + Math.random() * 0.8);
-      p.userData.maxLife = p.userData.life;
-      p.userData.gravity = gravity;
-      p.userData.size = size * (0.7 + Math.random() * 0.6);
-      p.scale.setScalar(p.userData.size);
-      p.visible = true;
-      this.particles.push(p);
+  _spawn(pos, vel, life, color, size, grow) {
+    const m = new THREE.Mesh(
+      size > 0.2 ? this._smokeGeo : this._sparkGeo,
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+    );
+    m.position.copy(pos);
+    if (size > 0.2) m.scale.setScalar(size / 0.35);
+    this.scene.add(m);
+    this.particles.push({ mesh: m, vel, life, maxLife: life, grow });
+  }
+
+  sparks(pos, n = 8) {
+    for (let i = 0; i < n; i++) {
+      this._spawn(pos, new THREE.Vector3(
+        (Math.random() - 0.5) * 8, Math.random() * 6 + 1, (Math.random() - 0.5) * 8,
+      ), 0.4 + Math.random() * 0.3, 0xffcc44, 0.09, 0);
     }
   }
 
-  smoke(x, y, z) {
-    this.spawn(x, y, z, { color: 0x555555, count: 2, speed: 0.6, life: 1.4, size: 1.1, gravity: 1.2 });
+  hitPuff(pos) {
+    for (let i = 0; i < 5; i++) {
+      this._spawn(pos, new THREE.Vector3(
+        (Math.random() - 0.5) * 3, Math.random() * 2, (Math.random() - 0.5) * 3,
+      ), 0.35, 0xdddddd, 0.12, 0);
+    }
   }
 
-  sparks(x, y, z) {
-    this.spawn(x, y, z, { color: 0xffd060, count: 10, speed: 5, life: 0.35, size: 0.35, gravity: -8 });
+  smoke(pos) {
+    this._spawn(pos, new THREE.Vector3(
+      (Math.random() - 0.5) * 0.8, 1.2 + Math.random(), (Math.random() - 0.5) * 0.8,
+    ), 1.1, 0x555555, 0.5, 1.6);
   }
 
-  muzzle(x, y, z, dir) {
-    this.spawn(x, y, z, { color: 0xffe080, count: 4, speed: 3, life: 0.12, size: 0.6, dir, spread: 0.2 });
+  // A tracer line from `from` to `to`, fading over 0.12s.
+  tracer(from, to) {
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: 0xffe9a8, transparent: true, opacity: 0.95,
+    }));
+    this.scene.add(line);
+    this.tracers.push({ line, life: 0.12 });
   }
 
-  blood(x, y, z) {
-    this.spawn(x, y, z, { color: 0xa02020, count: 6, speed: 2, life: 0.5, size: 0.4, gravity: -6 });
-  }
-
-  sparkle(x, y, z) {
-    this.spawn(x, y, z, { color: 0x80ffd0, count: 10, speed: 1.2, life: 0.9, size: 0.5, gravity: 1 });
-  }
-
-  dust(x, y, z) {
-    this.spawn(x, y, z, { color: 0xc8b890, count: 3, speed: 1, life: 0.7, size: 0.9, gravity: 0.5 });
+  muzzle(pos) {
+    this.flash.position.copy(pos);
+    this.flash.intensity = 3.2;
+    this.flashLife = 0.06;
   }
 
   update(dt) {
+    if (this.flashLife > 0) {
+      this.flashLife -= dt;
+      if (this.flashLife <= 0) this.flash.intensity = 0;
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
-      const u = p.userData;
-      u.life -= dt;
-      if (u.life <= 0) {
-        p.visible = false;
+      p.life -= dt;
+      if (p.life <= 0) {
+        this.scene.remove(p.mesh);
+        p.mesh.material.dispose();
         this.particles.splice(i, 1);
-        this.pool.push(p);
         continue;
       }
-      u.vy += u.gravity * dt;
-      p.position.x += u.vx * dt;
-      p.position.y += u.vy * dt;
-      p.position.z += u.vz * dt;
-      const t = u.life / u.maxLife;
-      p.material.opacity = t * 0.9;
-      p.scale.setScalar(u.size * (1.6 - t * 0.6));
+      p.mesh.position.addScaledVector(p.vel, dt);
+      p.vel.y -= 4 * dt;
+      if (p.grow) p.mesh.scale.multiplyScalar(1 + p.grow * dt);
+      p.mesh.material.opacity = Math.max(0, p.life / p.maxLife) * 0.9;
+    }
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const t = this.tracers[i];
+      t.life -= dt;
+      if (t.life <= 0) {
+        this.scene.remove(t.line);
+        t.line.geometry.dispose();
+        t.line.material.dispose();
+        this.tracers.splice(i, 1);
+      } else {
+        t.line.material.opacity = t.life / 0.12;
+      }
     }
   }
 }

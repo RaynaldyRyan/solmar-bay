@@ -1,50 +1,31 @@
-// Solmar Bay — save game.
-// One clear job: persist money, completed missions, player position and the
-// clock to localStorage, and restore them on load.
+// Save / load through localStorage. One slot, JSON, versioned so old saves are
+// ignored rather than misread.
+const KEY = 'solmar-bay-save-v1';
 
-import { SAVE_KEY } from './config.js';
-
-export function saveState(game) {
-  const data = {
-    version: 1,
-    savedAt: Date.now(),
-    money: game.money,
-    missionsCompleted: [...game.missions.completed],
-    player: {
-      x: game.player.x,
-      z: game.player.z,
-      health: game.player.health,
-      ammo: game.player.ammo,
-      pistolOwned: game.player.pistolOwned,
-    },
-    hour: game.day.hour,
-  };
+export function saveGame(data) {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    localStorage.setItem(KEY, JSON.stringify({ v: 1, ...data }));
     return true;
   } catch {
     return false;
   }
 }
 
-export function loadState() {
+export function loadGame() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.version !== 1) return null;
-    return data;
+    return data && data.v === 1 ? data : null;
   } catch {
     return null;
   }
 }
 
-export function clearState() {
-  try {
-    localStorage.removeItem(SAVE_KEY);
-  } catch { /* storage unavailable */ }
+export function hasSave() {
+  return loadGame() !== null;
 }
 
-export function hasSave() {
-  return loadState() !== null;
+export function clearSave() {
+  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
 }

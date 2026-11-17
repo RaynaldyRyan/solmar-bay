@@ -1,232 +1,227 @@
-// Solmar Bay — combat.
-// One clear job: the player's fists and pistol (hitscan with building
-// occlusion), tracers and muzzle flashes, and the rival gunmen who shoot back.
+// Combat: fists and pistol, hitscan with building occlusion, tracers and
+// muzzle flash; rival gunmen who shoot back; health and ammo pickups.
+import { WEAPONS, WANTED } from './config.js';
+import { createPersonMesh } from './player.js';
 
-import { WEAPONS } from './config.js';
-import { clamp } from './random.js';
-import { buildPersonMesh } from './player.js';
+function mat(color, opts = {}) {
+  return new THREE.MeshLambertMaterial({ color, ...opts });
+}
 
 export class Combat {
-  constructor(scene, city, game) {
+  constructor(scene, city, effects, audio, rng) {
     this.scene = scene;
     this.city = city;
-    this.game = game;
-    this.tracers = [];
-    this.gunmen = [];
-    this.tracerMat = new THREE.LineBasicMaterial({ color: 0xffe080, transparent: true, opacity: 0.9 });
+    this.effects = effects;
+    this.audio = audio;
+    this.rng = rng;
+    this.gunmen = [];   // {mesh,x,z,heading,health,dead,shootTimer,phase}
+    this.pickups = [];  // {mesh,kind,x,z,taken}
+    this.cooldown = 0;
+    this.onKillPed = null;   // () => void — wanted bookkeeping by the caller
+    this.onKillCop = null;
+    this.spawnPickups();
   }
 
-  // A short-lived bright line from muzzle to impact point.
-  tracer(from, to) {
-    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-    const line = new THREE.Line(geo, this.tracerMat);
-    this.scene.add(line);
-    this.tracers.push({ line, life: 0.08 });
+  spawnPickups() {
+    const spots = [
+      { kind: 'health', x: 14, z: -14 }, { kind: 'health', x: -80, z: -40 },
+      { kind: 'health', x: 140, z: 60 }, { kind: 'ammo', x: -20, z: 60 },
+      { kind: 'ammo', x: 100, z: -100 }, { kind: 'ammo', x: 172, z: -60 },
+      { kind: 'health', x: 60, z: 180 }, { kind: 'ammo', x: -140, z: 140 },
+    ];
+    for (const s of spots) this.addPickup(s.kind, s.x, s.z);
   }
 
-  // Hitscan from the player's eye along the aim direction. Returns the first hit.
-  hitscan(origin, dir, maxDist) {
-    // Step along the ray; stop at the first building.
-    const step = 1.2;
-    let hitDist = maxDist;
-    for (let d = 1; d < maxDist; d += step) {
-      const x = origin.x + dir.x * d;
-      const z = origin.z + dir.z * d;
-      if (this.city.rayBlocked(origin.x, origin.z, x, z)) {
-        hitDist = d;
-        break;
-      }
-    }
-    const end = new THREE.Vector3(
-      origin.x + dir.x * hitDist,
-      origin.y,
-      origin.z + dir.z * hitDist,
+  addPickup(kind, x, z) {
+    const color = kind === 'health' ? 0x35d05a : 0xf5c518;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), mat(color, { emissive: color, emissiveIntensity: 0.4 }));
+    mesh.position.set(x, 0.9, z);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(1.1, 0.08, 6, 20),
+      mat(color, { transparent: true, opacity: 0.6 }),
     );
-    // Who is closest to the ray, inside the hit range?
-    let best = null;
-    let bestD = Infinity;
-    const targets = [];
-    for (const ped of this.game.pedestrians.peds) {
-      if (!ped.dead) targets.push({ kind: 'ped', ref: ped, x: ped.x, z: ped.z, r: 0.8 });
-    }
-    for (const cop of this.game.police.footCops) {
-      targets.push({ kind: 'cop', ref: cop, x: cop.x, z: cop.z, r: 0.8 });
-    }
-    for (const g of this.gunmen) {
-      if (!g.dead) targets.push({ kind: 'gunman', ref: g, x: g.x, z: g.z, r: 0.8 });
-    }
-    for (const t of targets) {
-      const rx = t.x - origin.x;
-      const rz = t.z - origin.z;
-      const along = rx * dir.x + rz * dir.z;
-      if (along < 0 || along > hitDist) continue;
-      const side = Math.abs(rx * dir.z - rz * dir.x);
-      if (side < t.r && along < bestD) {
-        bestD = along;
-        best = t;
-      }
-    }
-    return { target: best, dist: best ? bestD : hitDist, end };
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 0.15, z);
+    this.scene.add(mesh, ring);
+    this.pickups.push({ mesh, ring, kind, x, z, taken: false });
   }
 
-  playerShoot(player) {
-    const origin = player.eyePos();
-    const dir = player.aimDir();
-    const { target, dist, end } = this.hitscan(origin, dir, WEAPONS.pistol.range);
-    this.tracer(origin, target ? new THREE.Vector3(target.x, 1.3, target.z) : end);
-    this.game.effects.muzzle(origin.x + dir.x, origin.y - 0.2, origin.z + dir.z, dir);
-    this.game.audio.gunshot();
-    this.game.pedestrians.scare(player.x, player.z, 30);
-    if (target) {
-      const dmg = WEAPONS.pistol.damage;
-      if (target.kind === 'ped') this.game.pedestrians.hurt(target.ref, dmg, this.game);
-      else if (target.kind === 'cop') this.game.police.hurtCop(target.ref, dmg, this.game);
-      else if (target.kind === 'gunman') this.hurtGunman(target.ref, dmg);
-      this.game.effects.blood(target.x, 1.3, target.z);
-    } else if (dist < WEAPONS.pistol.range) {
-      this.game.effects.sparks(end.x, 1.2, end.z);
-    }
-    // Firing in public draws the law.
-    if (this.game.police.stars === 0) this.game.police.addWanted(1, 'shots fired');
-  }
-
-  playerPunch(player) {
-    const reach = WEAPONS.fists.range;
-    const dir = player.aimDir();
-    const ox = player.x + dir.x * reach * 0.6;
-    const oz = player.z + dir.z * reach * 0.6;
-    this.game.audio.punch();
-    const ped = this.game.pedestrians.nearest(ox, oz, 1.4);
-    if (ped) {
-      this.game.pedestrians.hurt(ped, WEAPONS.fists.damage, this.game);
-      return;
-    }
-    for (const cop of this.game.police.footCops) {
-      if (Math.hypot(cop.x - ox, cop.z - oz) < 1.4) {
-        this.game.police.hurtCop(cop, WEAPONS.fists.damage, this.game);
-        return;
-      }
-    }
-    for (const g of this.gunmen) {
-      if (!g.dead && Math.hypot(g.x - ox, g.z - oz) < 1.4) {
-        this.hurtGunman(g, WEAPONS.fists.damage);
-        return;
-      }
-    }
-  }
-
-  // A foot cop fires at the player.
-  copShoot(cop, player) {
-    const from = new THREE.Vector3(cop.x, 1.5, cop.z);
-    const to = new THREE.Vector3(player.x, 1.3, player.z);
-    const dir = to.clone().sub(from).normalize();
-    this.tracer(from, to);
-    this.game.effects.muzzle(from.x, from.y, from.z, dir);
-    this.game.audio.gunshotFar();
-    // Cops miss more at range; a hit hurts.
-    const d = from.distanceTo(to);
-    const hitChance = clamp(0.55 - d / 90, 0.08, 0.5);
-    if (Math.random() < hitChance) {
-      player.hurt(6 + Math.random() * 6, this.game);
-    }
-  }
-
-  // --- Rival gunmen (mission enemies) ---
-
-  spawnGunmen(x, z, count, opts = {}) {
-    const out = [];
+  // Spawn rival gunmen around a point (mission ambushes).
+  spawnGunmen(x, z, count) {
     for (let i = 0; i < count; i++) {
-      const gx = x + (Math.random() - 0.5) * 8;
-      const gz = z + (Math.random() - 0.5) * 8;
-      const mesh = buildPersonMesh(opts.shirt ?? 0x8a2020, 0x1a1a22, 0x8a5a3a);
+      const a = (i / count) * Math.PI * 2 + this.rng() * 0.8;
+      const r = 12 + this.rng() * 8;
+      const gx = x + Math.cos(a) * r;
+      const gz = z + Math.sin(a) * r;
+      if (this.city.insideCollider(gx, gz, 1)) continue;
+      const mesh = createPersonMesh(0x8a2a2a, 0x2a2a2a, 0xe8b88a);
       mesh.position.set(gx, 0, gz);
       this.scene.add(mesh);
-      const g = {
-        mesh, x: gx, z: gz, heading: 0, health: opts.health ?? 100,
-        shootTimer: 1 + Math.random() * 2, walkPhase: Math.random() * 6,
-        dead: false, speed: 3.6, home: [gx, gz],
-      };
-      this.gunmen.push(g);
-      out.push(g);
-    }
-    return out;
-  }
-
-  clearGunmen() {
-    for (const g of this.gunmen) this.scene.remove(g.mesh);
-    this.gunmen = [];
-  }
-
-  hurtGunman(g, amount) {
-    if (g.dead) return;
-    g.health -= amount;
-    if (g.health <= 0) {
-      g.dead = true;
-      g.mesh.rotation.x = -Math.PI / 2;
-      g.mesh.position.y = 0.3;
-      this.game.missions.onGunmanDown(g);
-      setTimeout(() => {
-        this.scene.remove(g.mesh);
-        this.gunmen.splice(this.gunmen.indexOf(g), 1);
-      }, 5000);
+      this.gunmen.push({
+        mesh, x: gx, z: gz, heading: Math.atan2(x - gx, z - gz),
+        health: 60, dead: false, shootTimer: 1 + this.rng(),
+        phase: this.rng() * 6,
+      });
     }
   }
 
-  updateGunmen(dt, game) {
-    const player = game.player;
+  // The player attacks. Returns what happened ('punch' | 'shot' | 'reload' | null).
+  attack(player, aimHeading, time) {
+    if (this.cooldown > 0) return null;
+    const w = WEAPONS[player.weapon];
+    this.cooldown = 1 / w.rate;
+    const pos = player.pos;
+    const muzzle = player.muzzlePos();
+    if (player.weapon === 'fists') {
+      this.audio.punch();
+      // punch the nearest target in range and in front
+      const target = this.nearestTarget(pos.x, pos.z, aimHeading, w.range, 1.2);
+      if (target) {
+        this.damageTarget(target, w.damage);
+        this.effects.hitPuff(new THREE.Vector3(target.x, 1.2, target.z));
+      }
+      return 'punch';
+    }
+    // pistol
+    if (player.ammo.mag <= 0) {
+      this.reload(player);
+      return 'reload';
+    }
+    player.ammo.mag -= 1;
+    this.audio.gunshot();
+    this.effects.muzzle(muzzle);
+    const dir = { x: Math.sin(aimHeading), z: Math.cos(aimHeading) };
+    const end = { x: pos.x + dir.x * w.range, z: pos.z + dir.z * w.range };
+    // occlusion: stop the ray at the first building it hits
+    const hitWall = this.rayWall(pos.x, pos.z, end.x, end.z);
+    const range = hitWall === null ? w.range : hitWall;
+    const target = this.nearestTarget(pos.x, pos.z, aimHeading, range, 0.25);
+    let endPoint;
+    if (target) {
+      this.damageTarget(target, w.damage);
+      endPoint = new THREE.Vector3(target.x, 1.2, target.z);
+      this.effects.hitPuff(endPoint);
+    } else {
+      endPoint = new THREE.Vector3(pos.x + dir.x * range, 1.2, pos.z + dir.z * range);
+      if (hitWall !== null) this.effects.sparks(endPoint, 4);
+    }
+    this.effects.tracer(muzzle, endPoint);
+    return 'shot';
+  }
+
+  reload(player) {
+    if (player.weapon !== 'pistol') return;
+    const need = WEAPONS.pistol.mag - player.ammo.mag;
+    const take = Math.min(need, player.ammo.reserve);
+    player.ammo.mag += take;
+    player.ammo.reserve -= take;
+    this.cooldown = Math.max(this.cooldown, 0.9);
+  }
+
+  // Distance along the ray where it first enters a building, or null.
+  rayWall(x1, z1, x2, z2) {
+    const dx = x2 - x1, dz = z2 - z1;
+    const dist = Math.hypot(dx, dz);
+    const steps = Math.max(1, Math.ceil(dist / 2));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const px = x1 + dx * t, pz = z1 + dz * t;
+      for (const c of this.city.colliders) {
+        if (px > c.minX && px < c.maxX && pz > c.minZ && pz < c.maxZ) return dist * t;
+      }
+    }
+    return null;
+  }
+
+  // Nearest shootable target near the aim ray: gunmen, cops, peds (set by main).
+  nearestTarget(x, z, heading, range, halfAngle) {
+    let best = null, bestD = range;
+    const fx = Math.sin(heading), fz = Math.cos(heading);
+    const consider = (t) => {
+      if (!t || t.dead) return;
+      const dx = t.x - x, dz = t.z - z;
+      const d = Math.hypot(dx, dz);
+      if (d > bestD || d < 0.01) return;
+      const dot = (dx * fx + dz * fz) / d;
+      if (dot < Math.cos(halfAngle)) return;
+      bestD = d;
+      best = t;
+    };
+    for (const g of this.gunmen) consider(g);
+    if (this.cops) for (const c of this.cops) consider(c);
+    if (this.peds) for (const p of this.peds) consider(p);
+    return best;
+  }
+
+  damageTarget(t, dmg) {
+    t.health -= dmg;
+    if (t.health > 0) return;
+    if (this.gunmen.includes(t)) {
+      t.dead = true;
+      t.mesh.rotation.x = -Math.PI / 2;
+      t.mesh.position.y = 0.3;
+      this.addPickup('ammo', t.x + 1, t.z);
+    } else if (this.cops && this.cops.includes(t)) {
+      if (this.onKillCop) this.onKillCop(t);
+    } else if (this.peds && this.peds.includes(t)) {
+      if (this.onKillPed) this.onKillPed(t);
+    }
+  }
+
+  update(dt, player, time) {
+    if (this.cooldown > 0) this.cooldown -= dt;
+    const pos = player.pos;
+    // gunmen: face the player, strafe a little, shoot with inaccuracy
     for (const g of this.gunmen) {
       if (g.dead) continue;
-      const dx = player.x - g.x;
-      const dz = player.z - g.z;
+      const dx = pos.x - g.x, dz = pos.z - g.z;
       const d = Math.hypot(dx, dz);
-      const want = Math.atan2(dx, dz);
-      let dh = want - g.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      g.heading += clamp(dh, -3 * dt, 3 * dt);
-      const blocked = this.city.rayBlocked(g.x, g.z, player.x, player.z);
-      // Advance when the player is far or hidden; hold and shoot when in range.
-      if ((d > 16 || blocked) && d < 120) {
-        const nx = g.x + Math.sin(g.heading) * g.speed * dt;
-        const nz = g.z + Math.cos(g.heading) * g.speed * dt;
-        const [cx, cz] = this.city.collideCircle(nx, nz, 0.45);
-        g.x = cx;
-        g.z = cz;
-        g.walkPhase += dt * 10;
-        const swing = Math.sin(g.walkPhase) * 0.6;
-        const L = g.mesh.userData.limbs;
-        L.legL.rotation.x = swing;
-        L.legR.rotation.x = -swing;
-      }
-      g.mesh.position.set(g.x, 0, g.z);
+      g.heading = Math.atan2(dx, dz);
       g.mesh.rotation.y = g.heading;
-      if (!blocked && d < 40) {
-        g.shootTimer -= dt;
-        if (g.shootTimer <= 0) {
-          g.shootTimer = 0.9 + Math.random() * 1.1;
-          const from = new THREE.Vector3(g.x, 1.5, g.z);
-          const to = new THREE.Vector3(player.x, 1.3, player.z);
-          const dir = to.clone().sub(from).normalize();
-          this.tracer(from, to);
-          this.game.effects.muzzle(from.x, from.y, from.z, dir);
-          this.game.audio.gunshotFar();
-          const hitChance = clamp(0.5 - d / 100, 0.1, 0.45);
-          if (Math.random() < hitChance) player.hurt(5 + Math.random() * 6, this.game);
+      // strafe sideways to stay in the fight
+      g.phase += dt;
+      const strafe = Math.sin(g.phase * 0.9) * 2.2;
+      g.x += Math.cos(g.heading) * strafe * dt * 0.4;
+      g.z += -Math.sin(g.heading) * strafe * dt * 0.4;
+      const fixed = this.city.collideCircle(g.x, g.z, 0.5);
+      g.x = fixed.x; g.z = fixed.z;
+      g.mesh.position.set(g.x, 0, g.z);
+      g.mesh.userData.arms[0].rotation.x = -1.2;
+      g.mesh.userData.arms[1].rotation.x = -1.2;
+      g.shootTimer -= dt;
+      if (g.shootTimer <= 0 && d < 55 && !this.city.blocked(g.x, g.z, pos.x, pos.z)) {
+        g.shootTimer = 1.1 + this.rng() * 0.9;
+        const muzzle = new THREE.Vector3(g.x, 1.45, g.z);
+        // inaccurate: 55% hit chance at close range, less far away
+        const hitChance = Math.max(0.15, 0.6 - d * 0.008);
+        if (this.rng() < hitChance) {
+          player.hurt(8 + Math.floor(this.rng() * 8), time);
+          this.effects.tracer(muzzle, new THREE.Vector3(pos.x, 1.2, pos.z));
+        } else {
+          const miss = new THREE.Vector3(
+            pos.x + (this.rng() - 0.5) * 6, 0.5,
+            pos.z + (this.rng() - 0.5) * 6,
+          );
+          this.effects.tracer(muzzle, miss);
         }
+        this.effects.muzzle(muzzle);
+        this.audio.gunshot();
       }
     }
-  }
-
-  update(dt) {
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const t = this.tracers[i];
-      t.life -= dt;
-      if (t.life <= 0) {
-        this.scene.remove(t.line);
-        t.line.geometry.dispose();
-        this.tracers.splice(i, 1);
+    // pickups spin and bob; collect on touch
+    for (const p of this.pickups) {
+      if (p.taken) continue;
+      p.mesh.rotation.y += dt * 2;
+      p.mesh.position.y = 0.9 + Math.sin(time * 2 + p.x) * 0.15;
+      const d = Math.hypot(p.x - pos.x, p.z - pos.z);
+      if (d < 1.6) {
+        p.taken = true;
+        this.scene.remove(p.mesh);
+        this.scene.remove(p.ring);
+        if (p.kind === 'health') player.heal(40);
+        else player.ammo.reserve += 24;
+        this.audio.pickup();
       }
     }
-    this.updateGunmen(dt, this.game);
   }
 }

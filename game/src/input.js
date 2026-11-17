@@ -1,92 +1,78 @@
-// Solmar Bay — keyboard and mouse input.
-// One clear job: track which keys are held, expose edge-triggered presses,
-// and own pointer-lock mouse-look for the camera.
-
+// Keyboard + mouse input state. Keys are tracked by code; the mouse steers the
+// camera while the pointer is locked, and clicks fire the current weapon.
 export class Input {
-  constructor(canvas) {
+  constructor() {
     this.keys = new Set();
-    this.pressed = new Set();
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.mouseDown = false;
-    this.mousePressed = false;
+    this.clicked = false;       // set true on a fresh click, cleared by the game
     this.locked = false;
-    this.canvas = canvas;
-    this._onKeyDown = (e) => {
+    this.onKey = null;          // (code) => void, for one-shot keys
+    this._bound = [];
+    this._listen('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
-      this.pressed.add(e.code);
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
-        e.preventDefault();
-      }
-    };
-    this._onKeyUp = (e) => this.keys.delete(e.code);
-    this._onMouseMove = (e) => {
-      if (document.pointerLockElement === canvas) {
-        this.mouseDX += e.movementX;
-        this.mouseDY += e.movementY;
-      }
-    };
-    this._onMouseDown = (e) => {
-      if (e.button === 0) {
-        this.mouseDown = true;
-        this.mousePressed = true;
-      }
-    };
-    this._onMouseUp = (e) => {
-      if (e.button === 0) this.mouseDown = false;
-    };
-    this._onLockChange = () => {
-      this.locked = document.pointerLockElement === canvas;
-    };
-    this._onBlur = () => {
-      this.keys.clear();
-      this.mouseDown = false;
-    };
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('mousemove', this._onMouseMove);
-    window.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
-    document.addEventListener('pointerlockchange', this._onLockChange);
-    window.addEventListener('blur', this._onBlur);
+      if (this.onKey) this.onKey(e.code);
+      if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+    });
+    this._listen('keyup', (e) => this.keys.delete(e.code));
+    this._listen('blur', () => this.keys.clear());
+    this._listen('mousemove', (e) => {
+      if (!this.locked) return;
+      this.mouseDX += e.movementX || 0;
+      this.mouseDY += e.movementY || 0;
+    });
+    this._listen('mousedown', (e) => {
+      if (e.button !== 0) return;
+      this.mouseDown = true;
+      this.clicked = true;
+    });
+    this._listen('mouseup', (e) => { if (e.button === 0) this.mouseDown = false; });
+    document.addEventListener('pointerlockchange', () => {
+      this.locked = document.pointerLockElement === document.body;
+    });
   }
 
-  isDown(code) {
-    return this.keys.has(code);
+  _listen(type, fn) {
+    window.addEventListener(type, fn);
+    this._bound.push([type, fn]);
   }
 
-  // True once, on the frame the key went down.
-  wasPressed(code) {
-    return this.pressed.has(code);
+  down(code) { return this.keys.has(code); }
+
+  // -1/0/1 drive axis: W/S or Up/Down.
+  driveAxis() {
+    return (this.down('KeyW') || this.down('ArrowUp') ? 1 : 0)
+      - (this.down('KeyS') || this.down('ArrowDown') ? 1 : 0);
   }
 
-  // WASD as a -1..1 pair, forward = +y.
-  moveAxes() {
-    const x = (this.isDown('KeyD') ? 1 : 0) - (this.isDown('KeyA') ? 1 : 0);
-    const y = (this.isDown('KeyW') ? 1 : 0) - (this.isDown('KeyS') ? 1 : 0);
-    return { x, y };
+  // -1/0/1 steer axis: A/D or Left/Right.
+  steerAxis() {
+    return (this.down('KeyD') || this.down('ArrowRight') ? 1 : 0)
+      - (this.down('KeyA') || this.down('ArrowLeft') ? 1 : 0);
   }
 
-  requestLock() {
-    if (!this.locked) {
-      try {
-        this.canvas.requestPointerLock();
-      } catch {
-        // Pointer lock may be refused in headless runs; the game still plays.
-      }
+  lockPointer() {
+    if (!this.locked && document.body.requestPointerLock) {
+      document.body.requestPointerLock();
     }
   }
 
-  releaseLock() {
-    if (document.pointerLockElement) document.exitPointerLock();
+  unlockPointer() {
+    if (document.exitPointerLock) document.exitPointerLock();
   }
 
-  // Call once per frame, after the game has read this frame's input.
-  endFrame() {
-    this.pressed.clear();
-    this.mousePressed = false;
-    this.mouseDX = 0;
-    this.mouseDY = 0;
+  // Consume the accumulated mouse movement since the last frame.
+  takeMouse() {
+    const dx = this.mouseDX, dy = this.mouseDY;
+    this.mouseDX = 0; this.mouseDY = 0;
+    return { dx, dy };
+  }
+
+  takeClick() {
+    const c = this.clicked;
+    this.clicked = false;
+    return c;
   }
 }

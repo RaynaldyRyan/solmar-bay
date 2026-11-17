@@ -1,158 +1,136 @@
-// Solmar Bay — pedestrians.
-// One clear job: the people on the sidewalks (walk, chat, cross streets, flee
-// gunfire and near-miss cars) and the fleeing drivers carjacked by the player.
+// Pedestrians: blocky walkers strolling the sidewalks, chatting at the plaza,
+// fleeing when shots ring out or a car bears down on them.
+import { ROADS, WORLD_BOUND } from './config.js';
+import { createPersonMesh } from './player.js';
+import { pick, range } from './random.js';
 
-import { WORLD } from './config.js';
-import { Rng, clamp } from './random.js';
-import { buildPersonMesh } from './player.js';
-
-const SHIRTS = [0xe8e8e8, 0x5a8fd8, 0xd88a5a, 0x8ad85a, 0xd85aa8, 0x5ad8c8, 0xf2d020, 0x8a5ad8];
-const PANTS = [0x2a2a33, 0x3a4a5a, 0x5a3a2a, 0x2a4a2a];
-const SKINS = [0xc89a72, 0x8a5a3a, 0xe8b890, 0x6a4a2e];
+const SHIRTS = [0xe86a6a, 0x6a9ae8, 0x6ae8a0, 0xe8d44d, 0xb06ae8, 0xffffff, 0x2f8f83, 0xe89a4d];
+const PANTS = [0x3a3f45, 0x5a4a3a, 0x2a4a7a, 0x6a6a6a];
+const SKINS = [0xe8b88a, 0xc98a5a, 0x8a5a3a, 0xf2c9a0];
 
 export class Pedestrians {
-  constructor(scene, city, count = 26, seed = 11) {
+  constructor(scene, city, rng, count = 26) {
     this.scene = scene;
     this.city = city;
-    this.rng = new Rng(seed);
+    this.rng = rng;
     this.peds = [];
-    for (let i = 0; i < count; i++) this.spawn();
+    for (let i = 0; i < count; i++) this.spawnOne();
   }
 
-  spawn(x = null, z = null) {
+  spawnOne() {
     const rng = this.rng;
-    if (x === null) {
-      const [rx, rz] = this.city.randomRoadPoint(rng);
-      x = rx + rng.float(-7, 7);
-      z = rz + rng.float(-7, 7);
+    // start on a sidewalk beside a road, or around the plaza / park
+    let x, z;
+    if (rng() < 0.3) {
+      const a = rng() * Math.PI * 2;
+      x = Math.cos(a) * range(rng, 12, 30);
+      z = Math.sin(a) * range(rng, 12, 30);
+    } else {
+      const road = pick(rng, ROADS);
+      const along = range(rng, -150, 150);
+      const side = rng() < 0.5 ? -8.5 : 8.5;
+      if (rng() < 0.5) { x = along; z = road + side; } else { x = road + side; z = along; }
     }
-    const mesh = buildPersonMesh(rng.pick(SHIRTS), rng.pick(PANTS), rng.pick(SKINS));
+    if (this.city.insideCollider(x, z, 1)) { x = 0; z = 40; }
+    const mesh = createPersonMesh(pick(rng, SHIRTS), pick(rng, PANTS), pick(rng, SKINS));
     mesh.position.set(x, 0, z);
     this.scene.add(mesh);
-    const ped = {
-      mesh, x, z, heading: rng.float(0, Math.PI * 2),
-      speed: rng.float(1.1, 1.9), walkPhase: rng.float(0, 6),
-      target: null, wait: 0, fleeing: 0, health: 100, dead: false,
-      state: 'walk',
-    };
-    this.pickTarget(ped);
-    this.peds.push(ped);
-    return ped;
+    this.peds.push({
+      mesh, x, z,
+      heading: rng() * Math.PI * 2,
+      speed: range(rng, 1.2, 2.0),
+      target: this.randomTarget(),
+      flee: 0,          // seconds of fleeing left
+      fleeFrom: null,
+      phase: rng() * Math.PI * 2,
+      health: 100,
+      dead: false,
+    });
   }
 
-  pickTarget(ped) {
+  randomTarget() {
     const rng = this.rng;
-    const [x, z] = this.city.randomRoadPoint(rng);
-    ped.target = [x + rng.float(-7, 7), z + rng.float(-7, 7)];
+    const road = pick(rng, ROADS);
+    const along = range(rng, -150, 150);
+    const side = rng() < 0.5 ? -8.5 : 8.5;
+    if (rng() < 0.5) return { x: along, z: road + side };
+    return { x: road + side, z: along };
   }
 
-  update(dt, game) {
-    const player = game.player;
-    for (const ped of [...this.peds]) {
-      if (ped.dead) continue;
-      // Flee from gunfire or a fast car bearing down.
-      if (ped.fleeing > 0) {
-        ped.fleeing -= dt;
-        const away = Math.atan2(ped.x - player.x, ped.z - player.z);
-        ped.heading = away;
-        this.step(ped, dt, 4.6);
-        continue;
-      }
-      if (ped.wait > 0) {
-        ped.wait -= dt;
-        this.animate(ped, dt, 0);
-        continue;
-      }
-      if (!ped.target) this.pickTarget(ped);
-      const dx = ped.target[0] - ped.x;
-      const dz = ped.target[1] - ped.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 1.2) {
-        if (this.rng.chance(0.4)) ped.wait = this.rng.float(1, 4);
-        this.pickTarget(ped);
-        this.animate(ped, dt, 0);
-        continue;
-      }
-      const want = Math.atan2(dx, dz);
-      let dh = want - ped.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      ped.heading += clamp(dh, -2.4 * dt, 2.4 * dt);
-      this.step(ped, dt, ped.speed);
-      // Respawn far-away pedestrians near the player.
-      const pd2 = (ped.x - player.x) ** 2 + (ped.z - player.z) ** 2;
-      if (pd2 > 200 * 200) {
-        const a = this.rng.float(0, Math.PI * 2);
-        ped.x = clamp(player.x + Math.cos(a) * 70, -145, 145);
-        ped.z = clamp(player.z + Math.sin(a) * 70, -145, 150);
-        this.pickTarget(ped);
+  // Scare every ped within radius of (x, z): they run away from the point.
+  scare(x, z, radius) {
+    for (const p of this.peds) {
+      if (p.dead) continue;
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d < radius) {
+        p.flee = 4 + Math.random() * 3;
+        p.fleeFrom = { x, z };
       }
     }
   }
 
-  step(ped, dt, speed) {
-    const nx = ped.x + Math.sin(ped.heading) * speed * dt;
-    const nz = ped.z + Math.cos(ped.heading) * speed * dt;
-    const [cx, cz] = this.city.collideCircle(nx, nz, 0.45);
-    ped.x = cx;
-    ped.z = cz;
-    ped.mesh.position.set(ped.x, 0, ped.z);
-    ped.mesh.rotation.y = ped.heading;
-    this.animate(ped, dt, speed);
-  }
-
-  animate(ped, dt, speed) {
-    ped.walkPhase += dt * (speed > 3 ? 13 : 8) * (speed > 0 ? 1 : 0);
-    const swing = speed > 0 ? Math.sin(ped.walkPhase) * 0.6 : 0;
-    const L = ped.mesh.userData.limbs;
-    L.legL.rotation.x = swing;
-    L.legR.rotation.x = -swing;
-    L.armL.rotation.x = -swing * 0.7;
-    L.armR.rotation.x = swing * 0.7;
-  }
-
-  // Gunfire or a near miss scares everyone nearby.
-  scare(x, z, radius = 26) {
-    for (const ped of this.peds) {
-      if (ped.dead) continue;
-      const d2 = (ped.x - x) ** 2 + (ped.z - z) ** 2;
-      if (d2 < radius * radius) ped.fleeing = 5;
-    }
-  }
-
-  // A driver the player just carjacked runs away on foot.
-  spawnFleeingDriver(x, z) {
-    const ped = this.spawn(x, z);
-    ped.fleeing = 8;
-    return ped;
-  }
-
-  hurt(ped, amount, game) {
-    if (ped.dead) return;
-    ped.health -= amount;
-    game.effects.blood(ped.x, 1.2, ped.z);
-    this.scare(ped.x, ped.z, 30);
-    if (ped.health <= 0) {
-      ped.dead = true;
-      ped.mesh.rotation.x = -Math.PI / 2;
-      ped.mesh.position.y = 0.3;
-      game.police.addWanted(1, 'pedestrian down');
-    } else {
-      ped.fleeing = 6;
-    }
-  }
-
-  nearest(x, z, maxDist) {
-    let best = null;
-    let bestD = maxDist;
-    for (const ped of this.peds) {
-      if (ped.dead) continue;
-      const d = Math.hypot(ped.x - x, ped.z - z);
-      if (d < bestD) {
-        bestD = d;
-        best = ped;
+  update(dt, playerPos, playerSpeed) {
+    for (const p of this.peds) {
+      if (p.dead) continue;
+      // a fast car nearby scares peds
+      if (playerSpeed > 12) {
+        const d = Math.hypot(p.x - playerPos.x, p.z - playerPos.z);
+        if (d < 7 && p.flee <= 0) { p.flee = 3; p.fleeFrom = playerPos; }
       }
+      let tx, tz, speed;
+      if (p.flee > 0) {
+        p.flee -= dt;
+        const dx = p.x - p.fleeFrom.x, dz = p.z - p.fleeFrom.z;
+        const d = Math.hypot(dx, dz) || 1;
+        tx = p.x + (dx / d) * 10;
+        tz = p.z + (dz / d) * 10;
+        speed = 6.5;
+      } else {
+        tx = p.target.x; tz = p.target.z;
+        speed = p.speed;
+        if (Math.hypot(tx - p.x, tz - p.z) < 2) p.target = this.randomTarget();
+      }
+      const dx = tx - p.x, dz = tz - p.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.2) {
+        const want = Math.atan2(dx, dz);
+        let diff = want - p.heading;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        p.heading += Math.max(-3 * dt, Math.min(3 * dt, diff));
+        p.x += Math.sin(p.heading) * speed * dt;
+        p.z += Math.cos(p.heading) * speed * dt;
+        p.phase += dt * speed * 4;
+      }
+      p.x = Math.max(-WORLD_BOUND, Math.min(WORLD_BOUND, p.x));
+      p.z = Math.max(-WORLD_BOUND, Math.min(206, p.z));
+      const fixed = this.city.collideCircle(p.x, p.z, 0.5);
+      p.x = fixed.x; p.z = fixed.z;
+      p.mesh.position.set(p.x, 0, p.z);
+      p.mesh.rotation.y = p.heading;
+      const swing = Math.sin(p.phase) * 0.5;
+      p.mesh.userData.legs[0].rotation.x = swing;
+      p.mesh.userData.legs[1].rotation.x = -swing;
+      p.mesh.userData.arms[0].rotation.x = -swing * 0.6;
+      p.mesh.userData.arms[1].rotation.x = swing * 0.6;
+    }
+  }
+
+  // The ped nearest a point within radius, or null.
+  nearest(x, z, radius) {
+    let best = null, bestD = radius;
+    for (const p of this.peds) {
+      if (p.dead) continue;
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d < bestD) { bestD = d; best = p; }
     }
     return best;
+  }
+
+  kill(p) {
+    if (p.dead) return;
+    p.dead = true;
+    p.mesh.rotation.x = -Math.PI / 2; // fall over
+    p.mesh.position.y = 0.3;
   }
 }

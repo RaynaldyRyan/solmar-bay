@@ -1,254 +1,213 @@
-// Solmar Bay — story missions and courier runs.
-// One clear job: the 5-mission story (step definitions live in config.js:
-// goto, enterCar, escape and checkpoint steps, with stars/ambush/time
-// modifiers), the objective beacon and minimap marker, step completion,
-// timers, rewards, and the repeatable courier job that always pays.
-
+// Missions: the 5-mission Milo Vane story plus repeatable courier runs.
+// Step kinds (see config.js): goto (reach step.target), enterCar (get into
+// the staged archetype at step.at), escape (bring the wanted level to 0),
+// checkpoint (reach each of step.targets in order). A tall light beacon and
+// a minimap diamond mark the current objective.
 import { MISSIONS, COURIER_PAY } from './config.js';
 
 export class Missions {
-  constructor(scene, city, game) {
+  constructor(scene, rng, onEvent) {
     this.scene = scene;
-    this.city = city;
-    this.game = game;
+    this.rng = rng;
+    this.onEvent = onEvent;   // (type, payload) — 'missionStart','missionDone','missionFail','courierStart','courierDone','stepDone','ambush'
+    this.current = -1;        // index into MISSIONS, -1 = none active
+    this.step = 0;
+    this.checkpointIdx = 0;
     this.completed = new Set();
-    this.current = null; // { def, stepIndex, timer, gunmen, checkpointIndex, courier, stops, stopIndex }
-    this.beacon = this.buildBeacon();
-    scene.add(this.beacon);
-    this.beacon.visible = false;
-    this.courierCooldown = 0;
+    this.courier = null;      // {x,z} active courier pickup/dropoff
+    this.courierStage = 0;    // 0 = go to pickup, 1 = deliver
+    this.courierPay = 0;
+    this.timer = 0;           // mission time limit countdown
+    this.beacon = null;
+    this.marker = null;
+    this.ambushSpawned = false;
+    this.buildBeacon();
   }
 
   buildBeacon() {
-    const g = new THREE.Group();
-    const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.6, 2.6, 90, 12, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xffd040, transparent: true, opacity: 0.35,
-        side: THREE.DoubleSide, depthWrite: false,
-      }),
+    // a tall glowing column visible across the city
+    const geo = new THREE.CylinderGeometry(1.6, 1.6, 120, 12, 1, true);
+    this.beacon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: 0xf5c518, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
+    }));
+    this.beacon.position.y = 60;
+    this.beacon.visible = false;
+    this.scene.add(this.beacon);
+    // a ground ring at the objective
+    this.marker = new THREE.Mesh(
+      new THREE.TorusGeometry(3, 0.3, 8, 28),
+      new THREE.MeshBasicMaterial({ color: 0xf5c518 }),
     );
-    beam.position.y = 45;
-    g.add(beam);
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(2.2, 3.4, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffd040, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.15;
-    g.add(ring);
-    return g;
+    this.marker.rotation.x = Math.PI / 2;
+    this.marker.position.y = 0.3;
+    this.marker.visible = false;
+    this.scene.add(this.marker);
   }
 
-  // Start a story mission by its string id, in story order (unless forced,
-  // which the screenshot staging uses).
-  startMission(id, opts = {}) {
-    const def = MISSIONS.find((m) => m.id === id);
-    if (!def) return false;
-    if (!opts.force) {
-      const idx = MISSIONS.indexOf(def);
-      if (idx > 0 && !this.completed.has(MISSIONS[idx - 1].id)) return false;
-    }
-    this.current = {
-      def, stepIndex: 0, timer: 0, gunmen: [],
-      checkpointIndex: 0, courier: false,
-    };
-    this.game.hud.flash(`MISSION: ${def.title}`);
-    this.game.hud.showBrief(def.title, def.brief);
-    this.setupStep();
-    return true;
+  get active() { return this.current >= 0; }
+  get mission() { return this.active ? MISSIONS[this.current] : null; }
+
+  // Start the next uncompleted story mission.
+  startNext() {
+    const next = MISSIONS.findIndex((m) => !this.completed.has(m.id));
+    if (next === -1) return null;
+    this.current = next;
+    this.step = 0;
+    this.checkpointIdx = 0;
+    this.timer = MISSIONS[next].timeLimit || 0;
+    this.ambushSpawned = false;
+    this.placeMarker();
+    this.onEvent('missionStart', MISSIONS[next]);
+    return MISSIONS[next];
   }
 
-  startCourier() {
-    if (this.current) return false;
-    const def = {
-      id: 'courier', title: 'Courier Run', reward: COURIER_PAY,
-      brief: 'Pick up the package and deliver it across town. Fast pays the same — late pays nothing.',
-    };
-    // Two stops: pickup near the player, delivery across the map.
-    const [px, pz] = this.city.randomRoadPoint(this.game.rng || { pick: (l) => l[Math.floor(Math.random() * l.length)], chance: () => Math.random() < 0.5, float: (a, b) => a + Math.random() * (b - a) });
-    const [dx, dz] = this.city.randomRoadPoint(this.game.rng || { pick: (l) => l[Math.floor(Math.random() * l.length)], chance: () => Math.random() < 0.5, float: (a, b) => a + Math.random() * (b - a) });
-    this.current = {
-      def, stepIndex: 0, timer: 90, gunmen: [],
-      checkpointIndex: 0, courier: true,
-      stops: [[px, pz], [dx, dz]], stopIndex: 0,
-    };
-    this.game.hud.flash('COURIER RUN — pick up the package');
-    this.game.hud.setObjective('Pick up the package', 90);
-    return true;
-  }
-
-  currentStep() {
-    return this.current && !this.current.courier
-      ? this.current.def.steps[this.current.stepIndex]
-      : null;
-  }
-
-  objectivePos() {
-    if (!this.current) return null;
-    if (this.current.courier) return this.current.stops[this.current.stopIndex];
-    const step = this.currentStep();
+  // The current step's target position, or null (escape steps have no place).
+  currentTarget() {
+    if (this.courier) return this.courier;
+    if (!this.active) return null;
+    const step = this.mission.steps[this.step];
     if (!step) return null;
-    if (step.kind === 'goto') return step.at;
-    if (step.kind === 'checkpoint') return step.at[this.current.checkpointIndex];
-    return null; // enterCar / escape have no map point
+    if (step.kind === 'goto') return step.target;
+    if (step.kind === 'enterCar') return step.at;
+    if (step.kind === 'checkpoint') return step.targets[this.checkpointIdx];
+    return null; // escape
   }
 
-  setupStep() {
-    const step = this.currentStep();
-    if (!step) return;
-    this.current.timer = step.time || 0;
-    if (step.stars) {
-      this.game.police.addWanted(step.stars, 'the job went loud');
+  currentText() {
+    if (this.courier) {
+      return this.courierStage === 0
+        ? 'Courier: pick up the parcel'
+        : 'Courier: deliver the parcel';
     }
-    if (step.ambush) {
-      this.current.gunmen = this.game.combat.spawnGunmen(step.at[0], step.at[1], 3, { health: 80 });
-      this.game.hud.flash('Ambush! The Marineros are waiting at the drop');
-    }
-    if (step.kind === 'escape') {
-      this.game.hud.flash('Lose the heat — break line of sight, or visit Spray & Save');
-    }
-    this.game.hud.setObjective(step.label, this.current.timer);
+    if (!this.active) return null;
+    const step = this.mission.steps[this.step];
+    return step ? step.text : null;
   }
 
-  update(dt, game) {
-    this.courierCooldown -= dt;
-    if (this.beacon.visible) {
-      const s = 1 + Math.sin(performance.now() / 300) * 0.08;
-      this.beacon.scale.set(s, 1, s);
-      this.beacon.rotation.y += dt * 0.6;
-    }
-    if (!this.current) {
+  placeMarker() {
+    const t = this.currentTarget();
+    if (!t) {
       this.beacon.visible = false;
+      this.marker.visible = false;
       return;
     }
-    const player = game.player;
-    const step = this.currentStep();
-    // Timer.
-    if (this.current.timer > 0) {
-      this.current.timer -= dt;
-      const label = this.current.courier
-        ? (this.current.stopIndex === 0 ? 'Pick up the package' : 'Deliver the package')
-        : step.label;
-      game.hud.setObjective(label, Math.max(0, this.current.timer));
-      if (this.current.timer <= 0) {
-        this.failMission('Out of time');
+    this.beacon.visible = true;
+    this.marker.visible = true;
+    this.beacon.position.x = t.x;
+    this.beacon.position.z = t.z;
+    this.marker.position.x = t.x;
+    this.marker.position.z = t.z;
+  }
+
+  // Called every frame; wanted is the police wanted level (for escape steps).
+  update(dt, player, wanted) {
+    const pos = player.pos;
+    if (this.timer > 0) {
+      this.timer -= dt;
+      if (this.timer <= 0) {
+        const failed = this.mission;
+        this.current = -1;
+        this.placeMarker();
+        this.onEvent('missionFail', failed);
         return;
       }
     }
-    // Beacon follows the objective.
-    const obj = this.objectivePos();
-    if (obj) {
-      this.beacon.visible = true;
-      this.beacon.position.set(obj[0], 0, obj[1]);
-    } else {
-      this.beacon.visible = false;
-    }
-    // Courier completion.
-    if (this.current.courier) {
-      const [tx, tz] = this.current.stops[this.current.stopIndex];
-      if (Math.hypot(player.x - tx, player.z - tz) < 5) {
-        if (this.current.stopIndex === 0) {
-          this.current.stopIndex = 1;
-          this.current.timer = 120;
-          game.hud.flash('Package collected — deliver it across town');
-          game.hud.setObjective('Deliver the package', 120);
-          game.audio.pickup();
-        } else {
-          this.completeMission();
-        }
-      }
-      return;
-    }
-    // Story step completion.
-    if (step.kind === 'goto') {
-      const [tx, tz] = step.at;
-      const d = Math.hypot(player.x - tx, player.z - tz);
+    // courier run
+    if (this.courier) {
+      const d = Math.hypot(this.courier.x - pos.x, this.courier.z - pos.z);
       if (d < 6) {
-        if (step.inCar && player.onFoot) {
-          game.hud.flash('You need to be in a car for this');
-          return;
-        }
-        this.advanceStep();
-      }
-    } else if (step.kind === 'enterCar') {
-      if (!player.onFoot) this.advanceStep();
-    } else if (step.kind === 'escape') {
-      if (game.police.stars === 0) {
-        game.hud.flash('Clean getaway');
-        this.advanceStep();
-      }
-    } else if (step.kind === 'checkpoint') {
-      const [tx, tz] = step.at[this.current.checkpointIndex];
-      if (Math.hypot(player.x - tx, player.z - tz) < 8) {
-        game.audio.pickup();
-        this.current.checkpointIndex += 1;
-        if (this.current.checkpointIndex >= step.at.length) {
-          this.advanceStep();
+        if (this.courierStage === 0) {
+          this.courierStage = 1;
+          this.courier = this.randomSpot();
+          this.placeMarker();
+          this.onEvent('stepDone', { text: 'Parcel collected — deliver it' });
         } else {
-          game.hud.flash(`Checkpoint ${this.current.checkpointIndex + 1} of ${step.at.length}`);
+          this.courier = null;
+          this.placeMarker();
+          this.onEvent('courierDone', { pay: this.courierPay });
         }
       }
-    }
-  }
-
-  advanceStep() {
-    this.current.stepIndex += 1;
-    this.current.checkpointIndex = 0;
-    if (this.current.stepIndex >= this.current.def.steps.length) {
-      this.completeMission();
       return;
     }
-    this.setupStep();
+    if (!this.active) return;
+    const step = this.mission.steps[this.step];
+    if (!step) return;
+    // ambush: gunmen spawn once when the player nears the ambush step
+    if (step.ambush && !this.ambushSpawned) {
+      const d = Math.hypot(step.target.x - pos.x, step.target.z - pos.z);
+      if (d < 25) {
+        this.ambushSpawned = true;
+        this.onEvent('ambush', { at: step.target, count: step.ambush });
+      }
+    }
+    if (step.kind === 'goto') {
+      const d = Math.hypot(step.target.x - pos.x, step.target.z - pos.z);
+      if (d < 6) this.advance();
+    } else if (step.kind === 'enterCar') {
+      if (player.inCar && player.car.key === step.archetype) this.advance();
+    } else if (step.kind === 'escape') {
+      if (wanted === 0) this.advance();
+    } else if (step.kind === 'checkpoint') {
+      const pt = step.targets[this.checkpointIdx];
+      const d = Math.hypot(pt.x - pos.x, pt.z - pos.z);
+      if (d < 7) {
+        this.checkpointIdx += 1;
+        if (this.checkpointIdx >= step.targets.length) {
+          this.checkpointIdx = 0;
+          this.advance();
+        } else {
+          this.placeMarker();
+          this.onEvent('stepDone', { text: `Checkpoint ${this.checkpointIdx}/${step.targets.length}` });
+        }
+      }
+    }
   }
 
-  completeMission() {
-    const def = this.current.def;
-    const reward = def.reward;
-    this.game.money += reward;
-    this.game.hud.flash(`MISSION COMPLETE — +$${reward}`);
-    this.game.hud.showBrief('Mission Complete', `${def.title} — you earned $${reward}.`);
-    this.game.audio.missionComplete();
-    if (!this.current.courier) {
-      this.completed.add(def.id);
-      this.game.saveGame();
+  advance() {
+    this.step += 1;
+    this.ambushSpawned = false;
+    if (this.step >= this.mission.steps.length) {
+      const done = this.mission;
+      this.completed.add(done.id);
+      this.current = -1;
+      this.step = 0;
+      this.placeMarker();
+      this.onEvent('missionDone', done);
     } else {
-      this.courierCooldown = 5;
+      this.placeMarker();
+      const next = this.mission.steps[this.step];
+      this.onEvent('stepDone', { text: next.text });
     }
-    this.current = null;
-    this.beacon.visible = false;
-    this.game.hud.setObjective('', 0);
   }
 
-  failMission(reason) {
-    this.game.hud.flash(`MISSION FAILED — ${reason}`);
-    this.game.hud.showBrief('Mission Failed', `${this.current.def.title}: ${reason}. Try again from the pause menu.`);
-    this.game.combat.clearGunmen();
-    this.current = null;
-    this.beacon.visible = false;
-    this.game.hud.setObjective('', 0);
+  // Start a courier run: pickup then delivery, both random landmarks.
+  startCourier() {
+    if (this.active || this.courier) return false;
+    this.courierStage = 0;
+    this.courierPay = COURIER_PAY[Math.floor(this.rng() * COURIER_PAY.length)];
+    this.courier = this.randomSpot();
+    this.placeMarker();
+    this.onEvent('courierStart', { pay: this.courierPay });
+    return true;
   }
 
-  onGunmanDown(g) {
-    // Gunmen are a hazard, not a step requirement; nothing to count here.
-  }
-
-  // The next story mission the player can start.
-  nextMission() {
-    for (const m of MISSIONS) {
-      if (!this.completed.has(m.id)) return m;
-    }
-    return null;
-  }
-
-  missionState() {
-    return {
-      completed: [...this.completed],
-      current: this.current ? this.current.def.id : null,
+  randomSpot() {
+    const keys = ['plaza', 'rosa', 'park', 'harbor', 'lighthouse', 'ferris', 'beach', 'garage', 'pier'];
+    const spots = {
+      plaza: { x: 0, z: 0 }, rosa: { x: 34, z: -26 }, park: { x: -80, z: -80 },
+      harbor: { x: 172, z: -80 }, lighthouse: { x: 60, z: 204 }, ferris: { x: 120, z: 192 },
+      beach: { x: -20, z: 196 }, garage: { x: -100, z: 100 }, pier: { x: 60, z: 186 },
     };
+    return spots[keys[Math.floor(this.rng() * keys.length)]];
   }
 
-  loadState(completed) {
-    this.completed = new Set(completed || []);
+  // For save/load.
+  serialize() {
+    return { completed: [...this.completed] };
+  }
+  restore(data) {
+    if (data && Array.isArray(data.completed)) {
+      this.completed = new Set(data.completed);
+    }
   }
 }
