@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solmar Bay — an original open-world crime game</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game-container"></div>
+
+<!-- HUD -->
+<div id="hud" style="display:none">
+  <div id="top-right">
+    <div id="stars">☆☆☆☆☆</div>
+    <div id="money">$500</div>
+    <div id="clock">17:20</div>
+  </div>
+  <div id="top-left">
+    <div id="objective-box" style="display:none">
+      <div id="objective"></div>
+      <div id="objective-timer"></div>
+    </div>
+  </div>
+  <div id="bottom-left">
+    <canvas id="minimap" width="180" height="180"></canvas>
+  </div>
+  <div id="bottom-right">
+    <div id="speed"></div>
+    <div id="weapon-row"><span id="weapon">FISTS</span> <span id="ammo">—</span></div>
+    <div id="health-bar"><div id="health-fill"></div></div>
+  </div>
+  <div id="flash"></div>
+  <div id="brief">
+    <div id="brief-title"></div>
+    <div id="brief-text"></div>
+  </div>
+  <div id="hint"></div>
+  <div id="damage-flash"></div>
+  <div id="busted" class="end-screen"><div class="end-title">BUSTED</div><div class="end-sub">The SBPD caught you. Press ENTER to continue.</div></div>
+  <div id="wasted" class="end-screen"><div class="end-title">WASTED</div><div class="end-sub">Solmar Bay is unforgiving. Press ENTER to continue.</div></div>
+</div>
+
+<!-- Start screen -->
+<div id="start-screen">
+  <div class="title-block">
+    <h1>SOLMAR BAY</h1>
+    <p class="tagline">Sun, salt, and trouble — an original open-world crime game</p>
+    <p class="intro">You are Milo Vane, a driver new in town with $200 and a borrowed reputation.
+    Run jobs, steal cars, outrun the SBPD, and make a name for yourself before the sun goes down.</p>
+    <div class="menu-buttons">
+      <button id="start-btn">NEW GAME</button>
+      <button id="continue-btn">CONTINUE</button>
+    </div>
+    <div class="controls">
+      <div><b>WASD</b> drive / walk</div>
+      <div><b>Mouse</b> look · <b>Click</b> shoot / punch</div>
+      <div><b>E</b> enter / exit car</div>
+      <div><b>Space</b> handbrake / jump</div>
+      <div><b>Shift</b> sprint</div>
+      <div><b>Q</b> switch weapon</div>
+      <div><b>M</b> start mission · <b>C</b> courier run</div>
+      <div><b>Esc</b> pause</div>
+    </div>
+  </div>
+</div>
+
+<!-- Pause menu -->
+<div id="pause-menu" style="display:none">
+  <div class="pause-block">
+    <h2>PAUSED</h2>
+    <button id="resume-btn">RESUME</button>
+    <button id="mission-btn">START NEXT MISSION</button>
+    <button id="courier-btn">COURIER RUN ($120)</button>
+    <button id="save-btn">SAVE GAME</button>
+    <button id="restart-btn">NEW GAME (CLEAR SAVE)</button>
+    <p class="pause-note">Spray &amp; Save garage clears your wanted level for $150 — look for the blue garage in the southwest corner. Health and ammo pickups glow around the city.</p>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
