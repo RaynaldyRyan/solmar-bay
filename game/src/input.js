@@ -1,50 +1,91 @@
-// Keyboard + mouse input. Mouse orbit works with pointer lock when the
-// player clicks the canvas, and falls back to drag-to-look otherwise.
+// Keyboard + mouse input, read once per frame. Keys are actions, not state:
+// takeActions() drains the edge-triggered ones (confirm, pause, map, weapon
+// slots, enter/exit car, radio, horn) while the analog axes (throttle, steer,
+// brake, handbrake, nitro) are read live every step.
+export const ACTION_CONFIRM = 1;
+export const ACTION_PAUSE = 2;
+export const ACTION_MAP = 4;
+export const ACTION_ENTER_CAR = 8;
+export const ACTION_RADIO = 16;
+export const ACTION_HORN = 32;
+
+const WEAPON_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'];
+
 export function createInput(canvas) {
   const keys = new Set();
-  let mouseDX = 0, mouseDY = 0, dragging = false, lastX = 0, lastY = 0;
-  let locked = false;
+  let actions = 0;
+  let weaponSlot = -1;
+  let firing = false;
+  let mouseX = 0;
+  let mouseY = 0;
 
-  window.addEventListener('keydown', (e) => {
-    if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  function onKeyDown(e) {
+    if (e.repeat) return;
     keys.add(e.code);
-  });
-  window.addEventListener('keyup', (e) => keys.delete(e.code));
-  window.addEventListener('blur', () => keys.clear());
-
-  canvas.addEventListener('click', () => {
-    if (!locked && document.pointerLockElement !== canvas) {
-      try { canvas.requestPointerLock(); } catch (e) { /* drag fallback */ }
-    }
-  });
-  document.addEventListener('pointerlockchange', () => {
-    locked = document.pointerLockElement === canvas;
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (locked) { mouseDX += e.movementX; mouseDY += e.movementY; }
-    else if (dragging) { mouseDX += e.clientX - lastX; mouseDY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; }
-  });
-  canvas.addEventListener('mousedown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
-  window.addEventListener('mouseup', () => { dragging = false; });
+    if (e.code === 'Enter' || e.code === 'Space') actions |= ACTION_CONFIRM;
+    if (e.code === 'Escape' || e.code === 'KeyP') actions |= ACTION_PAUSE;
+    if (e.code === 'KeyM') actions |= ACTION_MAP;
+    if (e.code === 'KeyF') actions |= ACTION_ENTER_CAR;
+    if (e.code === 'KeyR') actions |= ACTION_RADIO;
+    if (e.code === 'KeyH') actions |= ACTION_HORN;
+    const slot = WEAPON_KEYS.indexOf(e.code);
+    if (slot >= 0) weaponSlot = slot;
+  }
+  function onKeyUp(e) {
+    keys.delete(e.code);
+  }
+  function onMouseDown(e) {
+    if (e.button === 0) firing = true;
+  }
+  function onMouseUp(e) {
+    if (e.button === 0) firing = false;
+  }
+  function onMouseMove(e) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  }
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  canvas.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('mousemove', onMouseMove);
 
   return {
-    isDown(code) { return keys.has(code); },
-    // One-shot key check: true only on the first frame the key is down.
-    pressed(code) {
-      if (keys.has(code) && !this._wasDown.has(code)) { this._wasDown.add(code); return true; }
-      if (!keys.has(code)) this._wasDown.delete(code);
-      return false;
+    takeActions() {
+      const a = actions;
+      actions = 0;
+      return a;
     },
-    _wasDown: new Set(),
-    takeMouse() { const d = { x: mouseDX, y: mouseDY }; mouseDX = 0; mouseDY = 0; return d; },
-    axis() {
-      // returns {x: strafe/steer -1..1, y: forward -1..1}
-      let x = 0, y = 0;
-      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
-      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
-      if (keys.has('KeyW') || keys.has('ArrowUp')) y += 1;
-      if (keys.has('KeyS') || keys.has('ArrowDown')) y -= 1;
-      return { x, y };
+    takeWeaponSlot() {
+      const s = weaponSlot;
+      weaponSlot = -1;
+      return s;
+    },
+    get firing() {
+      return firing;
+    },
+    get mouse() {
+      return { x: mouseX, y: mouseY };
+    },
+    // Driving axes: throttle 0..1, steer -1..1, brake, handbrake, nitro.
+    drive() {
+      const up = keys.has('KeyW') || keys.has('ArrowUp');
+      const down = keys.has('KeyS') || keys.has('ArrowDown');
+      const left = keys.has('KeyA') || keys.has('ArrowLeft');
+      const right = keys.has('KeyD') || keys.has('ArrowRight');
+      return {
+        throttle: up ? 1 : 0,
+        brake: down ? 1 : 0,
+        steer: (left ? -1 : 0) + (right ? 1 : 0),
+        handbrake: keys.has('Space') ? 1 : 0,
+        nitro: keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1 : 0,
+      };
+    },
+    // On-foot axes: forward/strafe in camera space, -1..1.
+    walk() {
+      const f = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
+      const s = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+      return { forward: f, strafe: s, sprint: keys.has('ShiftLeft') ? 1 : 0 };
     },
   };
 }

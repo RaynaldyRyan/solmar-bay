@@ -1,61 +1,82 @@
-// City layout, palette and tuning for Solmar Bay: Neon Tide.
-// The city is an 8x8 grid of blocks. Roads run on multiples of PITCH; each
-// block is BLOCK wide with ROAD-wide streets between them. The ocean lies
-// east of the grid; the Neon Boulevard is the easternmost north-south road.
+// Shared constants and data tables. Everything a system needs to agree on
+// lives here: the clock (DAY_MINUTES — the day-rollover check in world.js
+// reads it from here, never from a local copy), the world bounds, the
+// districts, the vehicle archetypes, the weapons, the radio stations and the
+// mission payouts. No system defines its own copy of these numbers.
+export const DAY_MINUTES = 1440;
+export const STEP = 1 / 60;
+export const TAPE_COUNT = 20;
+export const BEST_KEY = 'solmar-bay-best';
+export const SAVE_KEY = 'solmar-bay-save-v3';
 
-export const CFG = {
-  PITCH: 52,
-  BLOCK: 40,
-  ROAD_HALF: 6,
-  GRID: 4, // roads at -4..4 * PITCH
-  CITY_MIN: -208,
-  CITY_MAX: 208,
-  BEACH_X: 214, // sand starts here
-  OCEAN_X: 252, // water starts here
-  DAY_START_HOUR: 18.4, // dusk: the neon shows best
-  DAY_LENGTH_SEC: 480, // one full day cycle
-  WALK_SPEED: 7.5,
-  SPRINT_SPEED: 11.5,
-  GARAGE_COST: 150,
+export const WORLD = { minX: -1000, maxX: 1000, minZ: -700, maxZ: 700 };
+
+// Land masses: mainland (west), barrier island (east, the beach strip) and the
+// port peninsula (south-east), joined by two causeways over the bay.
+export const LAND = {
+  mainland: { x0: -1000, z0: -700, x1: 300, z1: 700 },
+  island: { x0: 560, z0: -700, x1: 760, z1: 700 },
+  port: { x0: 300, z0: 280, x1: 560, z1: 700 },
+  causewayN: { x0: 300, z0: -320, x1: 560, z1: -260 },
+  causewayS: { x0: 300, z0: 180, x1: 560, z1: 240 },
 };
 
-// Art-deco pastel palette for the buildings, plus the neon accent colors.
-export const PALETTE = {
-  facades: ['#ffd9c0', '#ffe9a8', '#ffc7dd', '#c8f2e4', '#cfe4ff', '#f6d8ff', '#ffedd0', '#d9f7ff'],
-  trim: ['#ff2e88', '#00e5ff', '#ffea00', '#b537f2', '#00ff9d'],
-  roofs: ['#7a5a8c', '#4a6b8a', '#8a5a5a', '#5a8a7a'],
-  road: '#3b3b46',
-  sidewalk: '#9a94a6',
-  sand: '#f2d5a0',
-  ocean: '#1a3a6b',
-};
-
-export const NEON_SIGNS = [
-  { text: 'HOTEL PALMA', color: '#ff2e88' },
-  { text: 'NEON TIDE', color: '#00e5ff' },
-  { text: 'CAFÉ LUNA', color: '#ffea00' },
-  { text: 'ARCADE', color: '#b537f2' },
-  { text: 'DRIVE-IN', color: '#00ff9d' },
-  { text: 'TIKI BAR', color: '#ff6b35' },
-  { text: 'DISCO', color: '#ff2e88' },
-  { text: 'SURF SHOP', color: '#00e5ff' },
+// 7 districts, each with its own palette and landmark. Rectangles tile the land
+// (causeways belong to the district they leave from).
+export const DISTRICTS = [
+  { id: 'north', name: 'North Shore', x0: -1000, z0: -700, x1: 300, z1: -260, palette: ['#7fb069', '#a7c957', '#6a994e'], landmark: 'Solmar Stadium', landmarkAt: [-650, -480] },
+  { id: 'downtown', name: 'Downtown', x0: -420, z0: -260, x1: 120, z1: 180, palette: ['#3a506b', '#5bc0be', '#1c2541'], landmark: 'Solmar Tower', landmarkAt: [-150, -40] },
+  { id: 'littlesol', name: 'Little Sol', x0: -1000, z0: -260, x1: -420, z1: 320, palette: ['#ff9f1c', '#ffbf69', '#e76f51'], landmark: 'Calle Ocho Market', landmarkAt: [-710, 40] },
+  { id: 'oldtown', name: 'Old Town', x0: -420, z0: 180, x1: 300, z1: 700, palette: ['#d8c3a5', '#c9ada7', '#b08968'], landmark: 'Fountain Plaza', landmarkAt: [-60, 440] },
+  { id: 'strip', name: 'Art Deco Strip', x0: 560, z0: -700, x1: 760, z1: 60, palette: ['#ff5d8f', '#ffb3c1', '#f72585'], landmark: 'Neon Pier', landmarkAt: [700, -300] },
+  { id: 'marina', name: 'Marina Bay', x0: 560, z0: 60, x1: 760, z1: 700, palette: ['#4cc9f0', '#4361ee', '#3a0ca3'], landmark: 'Harbor Lighthouse', landmarkAt: [720, 620] },
+  { id: 'port', name: 'Port Solmar', x0: 300, z0: 280, x1: 560, z1: 700, palette: ['#6c757d', '#adb5bd', '#495057'], landmark: 'Container Terminal', landmarkAt: [430, 490] },
 ];
 
-// Six car archetypes: name, top speed (m/s), acceleration, handling, size.
-export const CAR_ARCHETYPES = {
-  comet:   { name: 'Comet',   top: 34, accel: 16, grip: 2.6, len: 4.4, wid: 2.0, body: 0.62, colors: [0xffd23f, 0xff5a5a, 0x4fc3f7] },
-  coupe:   { name: 'Coupe',   top: 30, accel: 14, grip: 2.4, len: 4.2, wid: 1.9, body: 0.58, colors: [0xe040fb, 0xffffff, 0x212121] },
-  sedan:   { name: 'Sedan',   top: 27, accel: 12, grip: 2.2, len: 4.6, wid: 1.9, body: 0.62, colors: [0x90a4ae, 0x5d4037, 0x37474f] },
-  van:     { name: 'Van',     top: 23, accel: 10, grip: 1.9, len: 5.0, wid: 2.1, body: 0.95, colors: [0xfff3e0, 0x80cbc4, 0xefebe9] },
-  pickup:  { name: 'Pickup',  top: 28, accel: 13, grip: 2.1, len: 4.8, wid: 2.0, body: 0.66, colors: [0xef6c00, 0x33691e, 0x8d6e63] },
-  sport:   { name: 'Sport',   top: 38, accel: 19, grip: 3.0, len: 4.3, wid: 2.0, body: 0.50, colors: [0xff1744, 0x00e5ff, 0xffea00] },
+// 6 drivable archetypes + the police cruiser: distinct top speed, acceleration,
+// grip and silhouette (render3d draws each differently).
+export const ARCHETYPES = {
+  coupe: { name: 'Comet GT', top: 46, accel: 22, grip: 3.4, len: 4.4, wid: 2.0, color: 0xe91e8c, wing: true, desc: 'Rear-wing coupe' },
+  convertible: { name: 'Sunset Spyder', top: 40, accel: 19, grip: 2.6, len: 4.2, wid: 1.9, color: 0xffd166, wing: false, desc: 'Open-top convertible' },
+  sedan: { name: 'Metro Sedan', top: 32, accel: 14, grip: 3.0, len: 4.5, wid: 1.9, color: 0x8ecae6, wing: false, desc: 'Four-door sedan' },
+  taxi: { name: 'Solmar Taxi', top: 34, accel: 15, grip: 3.0, len: 4.5, wid: 1.9, color: 0xffc300, wing: false, desc: 'City cab' },
+  pickup: { name: 'Rancher 4x4', top: 30, accel: 13, grip: 3.2, len: 5.0, wid: 2.1, color: 0x606c38, wing: false, desc: 'Heavy pickup' },
+  van: { name: 'Cargo Van', top: 27, accel: 11, grip: 2.8, len: 5.2, wid: 2.1, color: 0xdad7cd, wing: false, desc: 'Delivery van' },
+  cruiser: { name: 'PD Cruiser', top: 42, accel: 21, grip: 3.5, len: 4.6, wid: 2.0, color: 0x111111, wing: false, desc: 'Police interceptor' },
 };
 
-export const MISSION_NAMES = [
-  'First Fare', 'Harbor Lights', 'Sunset Run', 'The Long Way Home', 'Neon Tide',
+// 5 weapons for the hotbar: damage, fire rate (shots/sec), range, spread.
+export const WEAPONS = [
+  { id: 'pistol', name: 'Pistol', dmg: 25, rate: 3.5, range: 90, spread: 0.02, auto: false },
+  { id: 'smg', name: 'SMG', dmg: 16, rate: 9, range: 80, spread: 0.05, auto: true },
+  { id: 'shotgun', name: 'Shotgun', dmg: 12, rate: 1.4, range: 45, spread: 0.12, auto: false, pellets: 6 },
+  { id: 'rifle', name: 'Rifle', dmg: 40, rate: 5, range: 160, spread: 0.015, auto: true },
+  { id: 'sniper', name: 'Sniper', dmg: 95, rate: 0.8, range: 260, spread: 0.002, auto: false },
 ];
 
-// Clamp a value into [a, b].
-export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-export function lerp(a, b, t) { return a + (b - a) * t; }
-export function dist2(ax, az, bx, bz) { const dx = ax - bx, dz = az - bz; return dx * dx + dz * dz; }
+// 3 procedural radio stations (radio.js synthesizes them with Web Audio).
+export const STATIONS = [
+  { id: 'neon', name: 'NEON FM 88.5', genre: 'Synthwave', bpm: 112, root: 55, minor: true, tracks: ['Midnight Overdrive', 'Chrome Hearts', 'Palm Static'] },
+  { id: 'latin', name: 'SOLMAR LATIN 101.2', genre: 'Latin Pop', bpm: 128, root: 65.4, minor: false, tracks: ['Calle Fuego', 'Baila Solmar', 'Ritmo del Mar'] },
+  { id: 'jazz', name: 'MIDNIGHT JAZZ 99.9', genre: 'Jazz', bpm: 84, root: 49, minor: true, tracks: ['Blue Hour', 'Harbor Lights', 'Last Call'] },
+];
+
+export const PROPERTIES = [
+  { id: 'safehouse', name: 'Neon Palms Apartment', price: 0, income: 0, at: [640, -120], owned: true, blurb: 'Safehouse — save here' },
+  { id: 'slip', name: 'Marina Slip 7', price: 12000, income: 400, at: [700, 420], owned: false, blurb: 'Boat slip, $400/day' },
+  { id: 'flamingo', name: "The Flamingo Club", price: 25000, income: 900, at: [660, -420], owned: false, blurb: 'Nightclub, $900/day' },
+];
+
+// Wanted levels: how many cruisers hunt, whether the helicopter flies, and the
+// escape radius the player must clear to cool down.
+export const WANTED = [
+  { stars: 0, cruisers: 0, heli: false, escape: 0 },
+  { stars: 1, cruisers: 1, heli: false, escape: 120 },
+  { stars: 2, cruisers: 2, heli: false, escape: 160 },
+  { stars: 3, cruisers: 3, heli: true, escape: 220 },
+  { stars: 4, cruisers: 4, heli: true, escape: 300 },
+  { stars: 5, cruisers: 6, heli: true, escape: 380 },
+];
+
+export const RESPRAY_COST = 500;
+export const NITRO_MAX = 100;

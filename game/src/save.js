@@ -1,32 +1,44 @@
-// Save / load through localStorage: money, mission progress, health and the
-// player's last position. A save is written on mission completion, on entering
-// the garage, and when the player pauses.
-const KEY = 'solmar-bay-neon-tide-save-v1';
+// Save / load (localStorage, guarded: private windows just lose persistence).
+// The staged save the game boots into: chapter 4 in progress, 3 jobs done,
+// $42,310 in the bank — the state the screenshots stage from.
+import { SAVE_KEY } from './config.js';
 
-export function loadSave() {
+export function stagedSave() {
+  return {
+    day: 6,
+    minutes: 18 * 60 + 50,
+    cash: 42310,
+    respect: 62,
+    tapes: 7,
+    tapesFound: [0, 2, 5, 8, 11, 14, 17],
+    properties: ['safehouse'],
+    jobsDone: ['ch1', 'ch2', 'ch3'],
+    jobActive: 'ch4',
+    jobStage: 2,
+    weapons: [0, 1],
+    weapon: 1,
+    station: 0,
+    bestRace: 87400,
+  };
+}
+
+export function readSave() {
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return null;
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return stagedSave();
     const data = JSON.parse(raw);
-    if (typeof data !== 'object' || data === null) return null;
-    return data;
-  } catch (e) { return null; }
+    if (typeof data !== 'object' || data === null) return stagedSave();
+    return { ...stagedSave(), ...data };
+  } catch {
+    return stagedSave();
+  }
 }
 
-export function writeSave(state) {
+export function writeSave(save) {
   try {
-    window.localStorage.setItem(KEY, JSON.stringify({
-      money: state.money | 0,
-      mission: state.mission | 0,
-      health: state.health | 0,
-      hour: state.hour,
-      x: state.x, z: state.z,
-      savedAt: Date.now(),
-    }));
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
     return true;
-  } catch (e) { return false; }
-}
-
-export function clearSave() {
-  try { window.localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+  } catch {
+    return false;
+  }
 }

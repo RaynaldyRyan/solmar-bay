@@ -1,150 +1,98 @@
-// Combat: fists and a pistol with hitscan shots, building occlusion, tracers
-// and muzzle flash; rival gunmen who shoot back; health and ammo pickups.
-import { makeCharacterMesh } from './player.js';
-import { segmentBlocked, resolveCircleColliders } from './city.js';
-import { dist2 } from './config.js';
+// On-foot combat: 5 weapons, guards with health and simple seek-and-shoot
+// AI, muzzle flashes and tracers the renderer draws. Firing is a ray from the
+// player toward the aim point; guards hit take damage and return fire when the
+// player is in range and in front of them.
+import { WEAPONS } from './config.js';
 
-export function createCombat(scene, city, effects, audio) {
-  const rivals = [];
-  const pickups = [];
-  let shootCooldown = 0;
-
-  const healthGeo = new THREE.BoxGeometry(0.7, 0.7, 0.2);
-  const healthMat = new THREE.MeshBasicMaterial({ color: 0x2bff88 });
-  const ammoGeo = new THREE.BoxGeometry(0.7, 0.5, 0.4);
-  const ammoMat = new THREE.MeshBasicMaterial({ color: 0xffc93c });
-
-  function spawnPickup(x, z, kind) {
-    const m = new THREE.Mesh(kind === 'health' ? healthGeo : ammoGeo, kind === 'health' ? healthMat : ammoMat);
-    m.position.set(x, 1, z);
-    scene.add(m);
-    pickups.push({ mesh: m, kind, x, z, spin: Math.random() * 6 });
-  }
-
-  // scatter a few pickups around the city
-  spawnPickup(26, 12, 'health'); spawnPickup(-78, 26, 'ammo');
-  spawnPickup(130, -78, 'health'); spawnPickup(208, 104, 'ammo');
-  spawnPickup(-182, -130, 'health'); spawnPickup(60, 182, 'ammo');
-
-  function spawnRival(x, z) {
-    const mesh = makeCharacterMesh(0x8a2a2a, 0x222222, 0xc98a5a);
-    mesh.group.position.set(x, 0, z);
-    scene.add(mesh.group);
-    const r = { mesh, pos: mesh.group.position, health: 50, angle: 0, shootTimer: 1 + Math.random(), walkPhase: 0 };
-    rivals.push(r);
-    return r;
-  }
-
-  function muzzlePos(player) {
-    const a = player.heading();
-    return {
-      x: player.pos.x + Math.sin(a) * 0.8,
-      y: player.isDriving() ? 1.4 : 1.5,
-      z: player.pos.z + Math.cos(a) * 0.8,
-    };
-  }
-
+export function createCombat() {
   return {
-    rivals,
-    spawnRival,
-    spawnPickup,
-    get rivalCount() { return rivals.length; },
-    // player fires the pistol toward the aim direction
-    shoot(player, aimX, aimZ) {
-      if (shootCooldown > 0 || player.ammo <= 0) return false;
-      shootCooldown = 0.28;
-      player.ammo -= 1;
-      const m = muzzlePos(player);
-      const dx = aimX - m.x, dz = aimZ - m.z;
-      const len = Math.sqrt(dx * dx + dz * dz) || 1;
-      const dirX = dx / len, dirZ = dz / len;
-      // find the nearest hit: rivals first, then buildings
-      let best = 60, hitRival = null;
-      for (const r of rivals) {
-        const rx = r.pos.x - m.x, rz = r.pos.z - m.z;
-        const along = rx * dirX + rz * dirZ;
-        if (along < 0 || along > best) continue;
-        const perp = Math.abs(rx * dirZ - rz * dirX);
-        if (perp < 0.9 && !segmentBlocked(m.x, m.z, r.pos.x, r.pos.z, city.colliders)) {
-          best = along; hitRival = r;
-        }
-      }
-      const endX = m.x + dirX * best, endZ = m.z + dirZ * best;
-      effects.tracer(m.x, m.y, m.z, endX, m.y, endZ);
-      effects.muzzle(m.x, m.y, m.z);
-      audio.gunshot();
-      if (hitRival) {
-        hitRival.health -= 34;
-        effects.burst(hitRival.pos.x, 1.4, hitRival.pos.z, 0xff4444, 8, 4);
-        if (hitRival.health <= 0) {
-          effects.burst(hitRival.pos.x, 1, hitRival.pos.z, 0xff4444, 20, 6);
-          scene.remove(hitRival.mesh.group);
-          rivals.splice(rivals.indexOf(hitRival), 1);
-        }
-      } else if (best < 60) {
-        effects.burst(endX, m.y, endZ, 0xffcc88, 4, 3);
-      }
-      return true;
-    },
-    punch(player) {
-      if (shootCooldown > 0) return;
-      shootCooldown = 0.4;
-      player.punchTimer = 0.3;
-      audio.thud();
-      const a = player.heading();
-      const fx = player.pos.x + Math.sin(a) * 1.4, fz = player.pos.z + Math.cos(a) * 1.4;
-      for (const r of [...rivals]) {
-        if (dist2(fx, fz, r.pos.x, r.pos.z) < 2.5) {
-          r.health -= 20;
-          effects.burst(r.pos.x, 1.4, r.pos.z, 0xffdd66, 6, 4);
-          if (r.health <= 0) {
-            scene.remove(r.mesh.group);
-            rivals.splice(rivals.indexOf(r), 1);
-          }
-        }
-      }
-    },
-    update(dt, player, onPlayerHit) {
-      shootCooldown = Math.max(0, shootCooldown - dt);
-      // pickups spin and bob; walking over one collects it
-      for (let i = pickups.length - 1; i >= 0; i--) {
-        const pk = pickups[i];
-        pk.spin += dt * 2;
-        pk.mesh.rotation.y = pk.spin;
-        pk.mesh.position.y = 1 + Math.sin(pk.spin * 1.5) * 0.15;
-        if (!player.isDriving() && dist2(player.pos.x, player.pos.z, pk.x, pk.z) < 2.2) {
-          if (pk.kind === 'health') player.heal(40);
-          else player.reserveAmmo = Math.min(120, player.reserveAmmo + 24);
-          audio.blip(880);
-          effects.burst(pk.x, 1, pk.z, pk.kind === 'health' ? 0x2bff88 : 0xffc93c, 10, 4);
-          scene.remove(pk.mesh);
-          pickups.splice(i, 1);
-        }
-      }
-      // rivals advance and shoot at the player
-      for (const r of rivals) {
-        const dx = player.pos.x - r.pos.x, dz = player.pos.z - r.pos.z;
-        const d = Math.sqrt(dx * dx + dz * dz) || 1;
-        r.angle = Math.atan2(dx, dz);
-        if (d > 14) {
-          r.pos.x += (dx / d) * 4.5 * dt;
-          r.pos.z += (dz / d) * 4.5 * dt;
-          resolveCircleColliders(r.pos, 0.5, city.colliders);
-          r.walkPhase += dt * 10;
-          const swing = Math.sin(r.walkPhase) * 0.65;
-          r.mesh.legL.rotation.x = swing;
-          r.mesh.legR.rotation.x = -swing;
-        }
-        r.mesh.group.rotation.y = r.angle;
-        r.shootTimer -= dt;
-        if (r.shootTimer <= 0 && d < 45 && !segmentBlocked(r.pos.x, r.pos.z, player.pos.x, player.pos.z, city.colliders)) {
-          r.shootTimer = 1.1 + Math.random() * 0.9;
-          effects.tracer(r.pos.x, 1.5, r.pos.z, player.pos.x, 1.3, player.pos.z);
-          effects.muzzle(r.pos.x, 1.5, r.pos.z);
-          audio.gunshot();
-          if (Math.random() < 0.45 && onPlayerHit) onPlayerHit(8);
-        }
-      }
-    },
+    guards: [],
+    tracers: [],
+    flashes: [],
+    cooldown: 0,
+    guardCooldown: 0,
   };
+}
+
+export function spawnGuards(combat, spots, count) {
+  combat.guards = [];
+  for (let i = 0; i < count; i += 1) {
+    const s = spots[i % spots.length];
+    combat.guards.push({
+      x: s[0], z: s[1], heading: Math.atan2(-s[0], -s[1]),
+      health: 100, alive: true, fireTimer: 0.5 + i * 0.4, weapon: 1,
+    });
+  }
+}
+
+// Fire one shot (or a pellet spread) from `from` toward `angle`. Returns the
+// hit point for the tracer; applies damage to the first guard in the cone.
+export function fireWeapon(combat, from, angle, weaponIndex, rng, now) {
+  const w = WEAPONS[weaponIndex];
+  if (combat.cooldown > 0) return null;
+  combat.cooldown = 1 / w.rate;
+  const pellets = w.pellets || 1;
+  let best = null;
+  for (let p = 0; p < pellets; p += 1) {
+    const a = angle + (rng.next() - 0.5) * w.spread * 2;
+    const ex = from.x + Math.sin(a) * w.range;
+    const ez = from.z + Math.cos(a) * w.range;
+    let hit = { x: ex, z: ez, dist: w.range, guard: null };
+    for (const g of combat.guards) {
+      if (!g.alive) continue;
+      const dx = g.x - from.x;
+      const dz = g.z - from.z;
+      const d = Math.hypot(dx, dz);
+      if (d > w.range || d < 1) continue;
+      const ga = Math.atan2(dx, dz);
+      let diff = ga - a;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      if (Math.abs(diff) < 0.09 && d < hit.dist) {
+        hit = { x: g.x, z: g.z, dist: d, guard: g };
+      }
+    }
+    if (hit.guard) {
+      hit.guard.health -= w.dmg;
+      if (hit.guard.health <= 0) hit.guard.alive = false;
+    }
+    combat.tracers.push({ x0: from.x, z0: from.z, x1: hit.x, z1: hit.z, life: 0.09 });
+    if (!best || hit.dist < best.dist) best = hit;
+  }
+  combat.flashes.push({ x: from.x, z: from.z, angle, until: now + 0.12, weapon: weaponIndex });
+  return best;
+}
+
+export function updateCombat(combat, state, dt, rng, now) {
+  combat.cooldown = Math.max(0, combat.cooldown - dt);
+  for (let i = combat.tracers.length - 1; i >= 0; i -= 1) {
+    combat.tracers[i].life -= dt;
+    if (combat.tracers[i].life <= 0) combat.tracers.splice(i, 1);
+  }
+  for (let i = combat.flashes.length - 1; i >= 0; i -= 1) {
+    if (now > combat.flashes[i].until) combat.flashes.splice(i, 1);
+  }
+  // Guards: face the player, strafe a little, shoot when in range.
+  const p = state.player;
+  for (const g of combat.guards) {
+    if (!g.alive) continue;
+    const dx = p.x - g.x;
+    const dz = p.z - g.z;
+    const dist = Math.hypot(dx, dz);
+    g.heading = Math.atan2(dx, dz);
+    g.fireTimer -= dt;
+    if (dist < 70 && g.fireTimer <= 0) {
+      g.fireTimer = 0.9 + rng.next() * 0.7;
+      const w = WEAPONS[g.weapon];
+      const a = g.heading + (rng.next() - 0.5) * 0.14;
+      const hitX = g.x + Math.sin(a) * Math.min(dist, w.range);
+      const hitZ = g.z + Math.cos(a) * Math.min(dist, w.range);
+      combat.tracers.push({ x0: g.x, z0: g.z, x1: hitX, z1: hitZ, life: 0.09 });
+      combat.flashes.push({ x: g.x, z: g.z, angle: a, until: now + 0.12, weapon: g.weapon });
+      if (Math.abs(a - g.heading) < 0.05 && dist < 60) {
+        if (state.armor > 0) state.armor = Math.max(0, state.armor - w.dmg * 0.6);
+        else state.health = Math.max(0, state.health - w.dmg * 0.6);
+      }
+    }
+  }
 }

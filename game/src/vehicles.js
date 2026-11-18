@@ -1,141 +1,115 @@
-// Cars: glossy-painted 3D models built from boxes and cylinders (body,
-// cabin, wheels, lights), plus arcade driving physics with collision.
-import { CAR_ARCHETYPES, clamp } from './config.js';
-import { resolveCircleColliders, resolveCircleObstacles } from './city.js';
+// Cars: arcade physics (acceleration, speed-scaled steering, handbrake drift,
+// nitro) plus the collision response against building footprints and the
+// world edge. One step function drives the player, the cops, the traffic and
+// the race rivals — the AI just feeds it different inputs.
+import { ARCHETYPES, NITRO_MAX, WORLD } from './config.js';
+import { hitBuilding, isLand } from './city.js';
 
-const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 12);
-const wheelMat = new THREE.MeshStandardMaterial({ color: 0x14141a, roughness: 0.9 });
-const hubGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.32, 8);
-const hubMat = new THREE.MeshStandardMaterial({ color: 0xd8d8e0, roughness: 0.3, metalness: 0.8 });
-const glassMat = new THREE.MeshStandardMaterial({ color: 0x0e1a2a, roughness: 0.08, metalness: 0.9 });
-const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff6c9 });
-const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
-
-// Builds a car mesh for an archetype. Returns { group, wheels, brakeLights }.
-export function createCarMesh(archetype, color, isPolice) {
-  const a = CAR_ARCHETYPES[archetype];
-  const g = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({
-    color: isPolice ? 0x1a2530 : color,
-    roughness: 0.32, metalness: 0.65,
-  });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(a.wid, a.body, a.len), paint);
-  body.position.y = 0.55 + a.body / 2 - 0.28;
-  body.castShadow = true;
-  g.add(body);
-  // hood slope + trunk lip
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(a.wid * 0.96, a.body * 0.55, 0.7), paint);
-  nose.position.set(0, 0.62, a.len / 2 - 0.2);
-  nose.castShadow = true;
-  g.add(nose);
-  // cabin
-  const cabLen = archetype === 'van' ? a.len * 0.82 : a.len * 0.5;
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(a.wid * 0.86, 0.55, cabLen), glassMat);
-  cabin.position.set(0, 0.55 + a.body - 0.28 + 0.28, archetype === 'van' ? 0.2 : -a.len * 0.06);
-  cabin.castShadow = true;
-  g.add(cabin);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(a.wid * 0.88, 0.08, cabLen * 0.96), paint);
-  roof.position.set(0, 0.55 + a.body - 0.28 + 0.58, archetype === 'van' ? 0.2 : -a.len * 0.06);
-  g.add(roof);
-  // wheels
-  const wheels = [];
-  const wx = a.wid / 2 - 0.05, wz = a.len / 2 - 0.75;
-  for (const [x, z] of [[-wx, wz], [wx, wz], [-wx, -wz], [wx, -wz]]) {
-    const w = new THREE.Group();
-    const tire = new THREE.Mesh(wheelGeo, wheelMat);
-    tire.rotation.z = Math.PI / 2;
-    tire.castShadow = true;
-    const hub = new THREE.Mesh(hubGeo, hubMat);
-    hub.rotation.z = Math.PI / 2;
-    w.add(tire); w.add(hub);
-    w.position.set(x, 0.36, z);
-    g.add(w);
-    wheels.push(w);
-  }
-  // headlights + taillights
-  const hlGeo = new THREE.BoxGeometry(0.42, 0.22, 0.08);
-  for (const s of [-1, 1]) {
-    const hl = new THREE.Mesh(hlGeo, lightMat);
-    hl.position.set(s * (a.wid / 2 - 0.35), 0.62, a.len / 2 + 0.01);
-    g.add(hl);
-    const tl = new THREE.Mesh(hlGeo, tailMat);
-    tl.position.set(s * (a.wid / 2 - 0.35), 0.66, -a.len / 2 - 0.01);
-    g.add(tl);
-  }
-  if (isPolice) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.16, 0.4), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 }));
-    bar.position.set(0, 0.55 + a.body - 0.28 + 0.62, -a.len * 0.06);
-    g.add(bar);
-    const red = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.42), new THREE.MeshBasicMaterial({ color: 0xff2020 }));
-    red.position.set(-0.28, 0.55 + a.body - 0.28 + 0.68, -a.len * 0.06);
-    g.add(red);
-    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.42), new THREE.MeshBasicMaterial({ color: 0x2050ff }));
-    blue.position.set(0.28, 0.55 + a.body - 0.28 + 0.68, -a.len * 0.06);
-    g.add(blue);
-    g.userData.lightbar = { red, blue };
-  }
-  return { group: g, wheels, archetype: a };
+export function createCar(type, x, z, heading) {
+  const arch = ARCHETYPES[type];
+  return {
+    type, x, z, heading,
+    speed: 0, steer: 0, nitro: NITRO_MAX, condition: 100,
+    drift: 0, driftScore: 0, sliding: false,
+    vx: 0, vz: 0, color: arch.color,
+  };
 }
 
-// A drivable car: position, heading, speed, health. update() applies arcade
-// physics and resolves collisions against the city.
-export function createCar(scene, archetype, color, x, z, angle, isPolice) {
-  const mesh = createCarMesh(archetype, color, isPolice);
-  mesh.group.position.set(x, 0, z);
-  mesh.group.rotation.y = angle;
-  scene.add(mesh.group);
-  const a = CAR_ARCHETYPES[archetype];
-  const car = {
-    mesh, archetype, angle, speed: 0, steer: 0, health: 100,
-    pos: mesh.group.position,
-    update(dt, throttle, steering, handbrake, city, onCrash) {
-      const prevX = this.pos.x, prevZ = this.pos.z;
-      if (throttle > 0) this.speed += a.accel * throttle * dt;
-      else if (throttle < 0) {
-        if (this.speed > 0.5) this.speed -= a.accel * 1.6 * dt; // brake
-        else this.speed = Math.max(this.speed + a.accel * 0.6 * throttle * dt, -a.top * 0.4);
-      } else {
-        this.speed -= this.speed * 0.15 * dt; // gentle rolling drag: coasts
-        if (Math.abs(this.speed) < 0.05) this.speed = 0;
-      }
-      this.speed = clamp(this.speed, -a.top * 0.4, a.top);
-      const speed01 = clamp(Math.abs(this.speed) / a.top, 0, 1);
-      this.steer = steering * (0.5 + 0.5 * (1 - speed01));
-      const turnRate = this.steer * a.grip * (this.speed >= 0 ? 1 : -1) * Math.min(1, Math.abs(this.speed) / 6 + 0.25);
-      this.angle += turnRate * dt * (handbrake ? 1.6 : 1);
-      if (handbrake) this.speed -= this.speed * 1.4 * dt;
-      const fx = Math.sin(this.angle), fz = Math.cos(this.angle);
-      this.pos.x += fx * this.speed * dt;
-      this.pos.z += fz * this.speed * dt;
-      const hitWall = resolveCircleColliders(this.pos, a.len * 0.42, city.colliders)
-        || resolveCircleObstacles(this.pos, a.len * 0.42, city.obstacles);
-      // keep inside the world
-      this.pos.x = clamp(this.pos.x, -340, 330);
-      this.pos.z = clamp(this.pos.z, -340, 340);
-      if (hitWall) {
-        const impact = Math.abs(this.speed);
-        if (impact > 6 && onCrash) onCrash(impact, this.pos.x, this.pos.z);
-        this.speed *= -0.25;
-        this.health = Math.max(0, this.health - impact * 0.7);
-      }
-      // wheel spin + front-wheel steer visuals
-      const spin = (this.speed * dt) / 0.36;
-      mesh.wheels.forEach((w, i) => {
-        w.children[0].rotation.x += spin;
-        w.children[1].rotation.x += spin;
-        if (i < 2) w.rotation.y = this.steer * 0.4;
-      });
-      mesh.group.rotation.y = this.angle;
-      return { movedX: this.pos.x - prevX, movedZ: this.pos.z - prevZ };
-    },
-    setPose(x, z, angle) {
-      this.pos.set(x, 0, z);
-      this.angle = angle;
-      this.speed = 0;
-      mesh.group.rotation.y = angle;
-    },
-    forward() { return { x: Math.sin(this.angle), z: Math.cos(this.angle) }; },
-    remove() { scene.remove(mesh.group); },
-  };
+// speed in m/s along the heading; vx/vz is the actual velocity (they diverge
+// while drifting, which is how the drift score is measured).
+export function stepCar(car, input, dt, city) {
+  const arch = ARCHETYPES[car.type];
+  // Normalize: callers may pass a partial input (the title screen passes {}),
+  // and an undefined axis must mean "off", never NaN.
+  const throttle = input.throttle || 0;
+  const brake = input.brake || 0;
+  const steerIn = input.steer || 0;
+  const handbrake = input.handbrake || 0;
+  const nitroIn = input.nitro || 0;
+  const boosting = nitroIn && car.nitro > 0 && throttle > 0;
+  const accel = arch.accel * (boosting ? 1.6 : 1);
+  if (throttle) car.speed += accel * dt;
+  if (brake) car.speed -= (car.speed > 0.5 ? 26 : 10) * dt;
+  car.speed -= car.speed * 0.35 * dt; // drag + rolling resistance
+  if (!throttle && !brake) car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 4 * dt);
+  const top = arch.top * (boosting ? 1.18 : 1);
+  car.speed = Math.max(-12, Math.min(top, car.speed));
+  if (boosting) car.nitro = Math.max(0, car.nitro - 34 * dt);
+  else car.nitro = Math.min(NITRO_MAX, car.nitro + 6 * dt);
+
+  // Steering tightens at low speed, loosens at high speed; handbrake cuts grip.
+  const spd = Math.abs(car.speed);
+  const steerRate = 2.4 * Math.min(1, 8 / (4 + spd * 0.55));
+  car.steer += (steerIn - car.steer) * Math.min(1, dt * 8);
+  car.heading += car.steer * steerRate * dt * Math.sign(car.speed || 1);
+
+  const grip = handbrake ? arch.grip * 0.25 : arch.grip;
+  const fx = Math.sin(car.heading);
+  const fz = Math.cos(car.heading);
+  // Velocity blends toward the heading direction at the grip rate: low grip
+  // leaves the old velocity in place, which is the slide.
+  const k = Math.min(1, grip * dt);
+  car.vx += (fx * car.speed - car.vx) * k;
+  car.vz += (fz * car.speed - car.vz) * k;
+  const slide = Math.hypot(car.vx - fx * car.speed, car.vz - fz * car.speed);
+  car.sliding = slide > 6 && spd > 12;
+  if (car.sliding) {
+    car.drift += slide * dt;
+    car.driftScore += slide * dt * 2; // accumulate the fraction — flooring
+    // each step rounded every increment to 0 and the drift never scored
+  }
+
+  let nx = car.x + car.vx * dt;
+  let nz = car.z + car.vz * dt;
+  // World edge + water: cars cannot leave the land.
+  nx = Math.max(WORLD.minX + 6, Math.min(WORLD.maxX - 6, nx));
+  nz = Math.max(WORLD.minZ + 6, Math.min(WORLD.maxZ - 6, nz));
+  if (!isLand(nx, nz)) {
+    nx = car.x;
+    nz = car.z;
+    car.speed *= 0.4;
+    car.vx *= -0.2;
+    car.vz *= -0.2;
+  }
+  // Buildings: push out along the smallest penetration axis, lose speed.
+  const b = hitBuilding(city, nx, nz, 2.4);
+  if (b) {
+    const overlapX = (b.w / 2 + 2.4) - Math.abs(nx - b.x);
+    const overlapZ = (b.d / 2 + 2.4) - Math.abs(nz - b.z);
+    if (overlapX < overlapZ) nx = b.x + Math.sign(nx - b.x) * (b.w / 2 + 2.5);
+    else nz = b.z + Math.sign(nz - b.z) * (b.d / 2 + 2.5);
+    const impact = Math.abs(car.speed);
+    car.speed *= 0.35;
+    car.vx *= 0.3;
+    car.vz *= 0.3;
+    if (impact > 12) car.condition = Math.max(0, car.condition - (impact - 12) * 0.8);
+  }
+  car.x = nx;
+  car.z = nz;
   return car;
+}
+
+// Near-miss: another car passed within 4 m at a closing speed over 15 m/s.
+export function nearMiss(a, b) {
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist > 4.5 || dist < 1.5) return false;
+  const closing = Math.abs((a.vx - b.vx) * dx + (a.vz - b.vz) * dz) / Math.max(dist, 0.1);
+  return closing > 15;
+}
+
+export function kmh(car) {
+  return Math.round(Math.hypot(car.vx, car.vz) * 3.6);
+}
+
+export function gearOf(car) {
+  const s = Math.abs(car.speed);
+  if (s < 0.5) return 'N';
+  if (car.speed < 0) return 'R';
+  if (s < 8) return '1';
+  if (s < 16) return '2';
+  if (s < 25) return '3';
+  if (s < 34) return '4';
+  return '5';
 }
