@@ -1,102 +1,122 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solmar Bay: Neon Tide — an open-world crime game</title>
-<link rel="stylesheet" href="style.css">
+<title>Solmar Bay: Neon Tide</title>
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<div id="game-container"></div>
+<canvas id="game" aria-label="Solmar Bay: Neon Tide — an open-world crime game. Drive with W A S D, shoot with the mouse, open the map with M."></canvas>
+<p id="status" role="status" aria-live="polite"></p>
 
-<!-- HUD -->
-<div id="hud">
-  <div id="hud-objective" class="hidden">
-    <span id="hud-objective-text">Press M for the next job</span>
+<!-- HUD (hud.js owns every panel; no keybind cheat-sheet — controls are in pause). -->
+<div id="hud" class="hidden">
+  <div id="mission-card" class="panel">
+    <div class="mc-top"><span id="mc-chapter">CH 4 — The Marina Exchange</span><span id="mc-timer">3:12</span></div>
+    <div id="mc-objective">Take the coupe and run</div>
+    <div id="mc-sub">Lose the tail, reach the respray</div>
+    <div class="stage-bar"><div id="mc-stage-fill"></div></div>
+    <div class="mc-bottom"><span id="mc-stage-label">STAGE 3/4</span><span id="mc-next">NEXT: Lose the heat at the respray</span></div>
   </div>
-  <div id="hud-top-right">
-    <div id="hud-stars" class="stars">☆☆☆☆☆</div>
-    <div id="hud-money">$200</div>
-    <div id="hud-clock">18:24</div>
+  <div id="dispatch" class="panel">
+    <div class="panel-title">DISPATCH</div>
+    <div id="dispatch-lines"></div>
   </div>
-  <div id="hud-bottom-left">
+  <div id="top-right">
+    <div id="clock" class="panel">DAY 6 — 18:50</div>
+    <div id="cash" class="panel">$42,310</div>
+    <div class="panel"><span id="stars">★★★★☆</span> <span id="zone-pill" class="zone-in-sight">IN SIGHT</span></div>
+    <div id="hotbar"></div>
+  </div>
+  <div id="bottom-right">
+    <div id="radio-widget" class="panel"><span id="radio-station">NEON FM 88.5</span><span id="radio-track">Midnight Overdrive</span></div>
+    <div id="speedo" class="panel">
+      <div class="speed-row"><span id="speed-num">151</span><span class="speed-unit">km/h</span><span id="speed-gear">5</span></div>
+      <div class="nitro-bar"><div id="nitro-fill"></div></div>
+      <div id="speed-car">Comet GT — 100%</div>
+    </div>
+  </div>
+  <div id="bottom-left">
     <canvas id="minimap" width="168" height="168"></canvas>
-    <div id="hud-health">
-      <span id="hud-health-text">100 HP</span>
-      <div class="health-bar"><div id="hud-health-fill" class="health-fill" style="width:100%"></div></div>
+    <div id="district-label">Art Deco Strip</div>
+    <div id="vitals">
+      <div class="vital"><span>HP</span><div class="vital-bar"><div id="health-fill"></div></div></div>
+      <div class="vital"><span>ARMOR</span><div class="vital-bar"><div id="armor-fill"></div></div></div>
+      <div id="respect-val">RESPECT 62</div>
     </div>
   </div>
-  <div id="hud-bottom-right">
-    <div id="hud-weapon">FISTS</div>
-    <div id="hud-ammo">—</div>
-    <div id="hud-speed" style="display:none"></div>
+  <div id="score-pop" class="hidden"></div>
+  <div id="dialogue" class="panel hidden">
+    <canvas id="dlg-portrait" width="72" height="72"></canvas>
+    <div><div id="dlg-name">Vera Solano</div><div id="dlg-text"></div></div>
   </div>
-  <div id="mission-card" class="hidden">
-    <div id="mission-card-title"></div>
-    <div id="mission-card-text"></div>
-  </div>
-  <div id="hud-flash" class="hidden"></div>
-  <div id="hud-message" class="hidden"></div>
-  <div id="hud-hints">WASD move / drive · Space jump / handbrake · Shift sprint · E enter / exit car · F punch / shoot · Q weapon · R reload · M mission · C courier · G garage · P pause</div>
+  <div id="toast" class="hidden"></div>
 </div>
 
-<!-- Start screen -->
+<!-- Full-screen city map (M key). -->
+<div id="map-screen" class="hidden">
+  <div id="map-left">
+    <h2>SOLMAR BAY</h2>
+    <canvas id="map-canvas" width="900" height="630"></canvas>
+    <div id="map-legend">
+      <span><i class="dot gold"></i>Active job</span><span><i class="dot green"></i>Complete</span>
+      <span><i class="dot grey"></i>Locked</span><span><i class="dot pink"></i>Sunset Tape</span>
+      <span><i class="dot white"></i>You</span><span><i class="dot blue"></i>Police</span>
+      <span><i class="dot yellow"></i>GPS route</span><span><i class="dot orange"></i>Respray</span>
+      <span><i class="dot red"></i>Weapons</span><span><i class="dot cyan"></i>Safehouse</span>
+      <span><i class="dot purple"></i>Race start</span>
+    </div>
+  </div>
+  <div id="map-right">
+    <h3>STORY JOBS</h3>
+    <div id="map-jobs"></div>
+    <h3>STATS</h3>
+    <div id="map-stats"></div>
+    <p class="map-hint">M or Esc to close the map.</p>
+  </div>
+</div>
+
+<!-- Start screen: title, save details, controls, 6 portraits. -->
 <div id="start-screen">
-  <div class="start-inner">
-    <h1 class="start-title">SOLMAR<br>BAY</h1>
-    <div class="start-sub">NEON TIDE</div>
-    <p class="start-tag">Sun, salt air, and one last score.</p>
-    <p class="start-story">Milo Vane came home to Solmar Bay broke. Rosa needs a driver, the
-    harbor crew needs a wheelman, and the Solmar Bay PD needs a reason to chase you.
-    Steal cars, run jobs, stay ahead of the law — and make the bay yours.</p>
-    <div class="start-buttons">
-      <button id="btn-new" class="btn-primary">NEW GAME</button>
-      <button id="btn-continue" class="btn-secondary">CONTINUE</button>
-    </div>
-    <div class="start-controls">
-      <div><b>WASD</b> — move / drive</div>
-      <div><b>Mouse</b> — camera</div>
-      <div><b>Space</b> — jump / handbrake</div>
-      <div><b>Shift</b> — sprint</div>
-      <div><b>E</b> — enter / exit car</div>
-      <div><b>F</b> — punch / shoot</div>
-      <div><b>Q</b> — switch weapon</div>
-      <div><b>R</b> — reload</div>
-      <div><b>M</b> — start mission</div>
-      <div><b>C</b> — courier run</div>
-      <div><b>P</b> — pause</div>
-    </div>
-    <p class="start-disclaimer">An original game. No affiliation with Rockstar Games or Grand Theft Auto.</p>
+  <div class="title-block">
+    <h1>SOLMAR BAY</h1>
+    <h2>NEON TIDE</h2>
+    <p class="tagline">One city. One last score. Outrun the tide.</p>
   </div>
+  <div id="save-details" class="panel"></div>
+  <div id="portraits"></div>
+  <div id="controls-panel" class="panel">
+    <div><b>W A S D</b> drive / walk</div><div><b>Space</b> handbrake</div><div><b>Shift</b> nitro / sprint</div>
+    <div><b>Mouse</b> aim &amp; shoot on foot</div><div><b>1–5</b> weapons</div><div><b>F</b> enter car / interact</div>
+    <div><b>M</b> map</div><div><b>R</b> radio</div><div><b>Esc</b> pause</div>
+  </div>
+  <p class="start-prompt">Press Enter or click to start</p>
 </div>
 
-<!-- Pause menu -->
-<div id="pause-menu" class="hidden">
-  <div class="menu-panel">
+<div id="pause-screen" class="hidden overlay">
+  <div class="panel big">
     <h2>PAUSED</h2>
-    <p>Progress saved.</p>
-    <button id="btn-resume" class="btn-primary">RESUME</button>
-    <button id="btn-restart" class="btn-secondary">RESPAWN AT PLAZA</button>
+    <div class="controls-grid">
+      <div><b>W A S D</b> drive / walk</div><div><b>Space</b> handbrake drift</div>
+      <div><b>Shift</b> nitro / sprint</div><div><b>Mouse</b> aim, click to shoot</div>
+      <div><b>1–5</b> switch weapon</div><div><b>F</b> enter car / interact</div>
+      <div><b>M</b> city map</div><div><b>R</b> next radio station</div>
+      <div><b>H</b> horn</div><div><b>Esc / P</b> resume</div>
+    </div>
+    <p>Respray garage clears your wanted level for $500. The weapon dealer in Little Sol sells guns. Buy properties for daily income. Collect all 20 Sunset Tapes.</p>
   </div>
 </div>
 
-<!-- Busted / wasted -->
-<div id="busted-screen" class="hidden end-screen">
-  <div class="menu-panel">
-    <h2 class="busted-title">BUSTED</h2>
-    <p>The Solmar Bay PD caught up with you. Fine paid: $100.</p>
-    <button id="btn-busted-ok" class="btn-primary">BACK ON THE STREET</button>
-  </div>
-</div>
-<div id="wasted-screen" class="hidden end-screen">
-  <div class="menu-panel">
-    <h2 class="wasted-title">WASTED</h2>
-    <p>Milo went down. Hospital bill: $50.</p>
-    <button id="btn-wasted-ok" class="btn-primary">GET UP</button>
+<div id="over-screen" class="hidden overlay">
+  <div class="panel big">
+    <h2>WASTED</h2>
+    <p>Solmar Bay got the better of you this time.</p>
+    <p class="start-prompt">Press Enter to try again</p>
   </div>
 </div>
 
-<script src="vendor/three.min.js"></script>
-<script type="module" src="src/main.js"></script>
+<script src="./vendor/three.min.js"></script>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>
